@@ -5,7 +5,7 @@
  */
 
 import { jsPDF } from "jspdf";
-import { formatCurrency, numberToIndianWords } from "@/lib/invoice-utils";
+import { numberToIndianWords } from "@/lib/invoice-utils";
 import { type DeliveryChallanDocument, type CustomerOption } from "./delivery-challan-types";
 
 export interface CompanyProfileInfo {

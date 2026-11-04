@@ -5,12 +5,10 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Boxes,
-  Check,
   CheckCircle2,
   ChevronRight,
   Info,
   Loader2,
-  Package,
   Save,
   Sliders,
 } from "lucide-react";

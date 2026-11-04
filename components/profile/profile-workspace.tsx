@@ -8,20 +8,16 @@ import {
   Check,
   CheckCircle2,
   Copy,
-  CreditCard,
   Edit3,
   Eye,
   EyeOff,
-  FileText,
   KeyRound,
   Landmark,
-  Lock,
   Mail,
   MapPin,
   Phone,
   Save,
   ShieldCheck,
-  Sparkles,
   Upload,
   User,
   X,
@@ -29,7 +25,6 @@ import {
 import {
   INDIAN_STATES,
   PAN_REGEX,
-  AADHAAR_REGEX,
   GSTIN_REGEX,
   IFSC_REGEX,
   formatAadhaarDisplay,
@@ -78,8 +73,8 @@ const inputClass =
 export function ProfileWorkspace() {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshIndex, setRefreshIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
-  const [activeSection, setActiveSection] = useState<string>("all");
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -128,24 +123,30 @@ export function ProfileWorkspace() {
   const [passwordStatus, setPasswordStatus] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
   useEffect(() => {
-    fetchProfile();
-  }, []);
-
-  async function fetchProfile() {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/profile");
-      const data = await res.json();
-      if (data.ok && data.profile) {
-        setProfile(data.profile);
-        initFormState(data.profile);
+    let active = true;
+    async function loadProfile() {
+      try {
+        setLoading(true);
+        const res = await fetch("/api/profile");
+        const data = await res.json();
+        if (!active) return;
+        if (data.ok && data.profile) {
+          setProfile(data.profile);
+          initFormState(data.profile);
+        }
+      } catch {
+        if (active) {
+          setStatusMessage({ text: "Unable to load profile data.", type: "error" });
+        }
+      } finally {
+        if (active) setLoading(false);
       }
-    } catch {
-      setStatusMessage({ text: "Unable to load profile data.", type: "error" });
-    } finally {
-      setLoading(false);
     }
-  }
+    void loadProfile();
+    return () => {
+      active = false;
+    };
+  }, [refreshIndex]);
 
   function initFormState(p: ProfileData) {
     setEditName(p.name || "");
@@ -173,9 +174,8 @@ export function ProfileWorkspace() {
     setEditBranch(p.bankDetails?.branch || "");
   }
 
-  const handleStartEdit = (section: string = "all") => {
+  const handleStartEdit = (_section: string = "all") => {
     if (profile) initFormState(profile);
-    setActiveSection(section);
     setIsEditing(true);
     setStatusMessage(null);
   };
@@ -388,7 +388,7 @@ export function ProfileWorkspace() {
       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center text-rose-800">
         <p className="font-semibold">Unable to load profile</p>
         <button
-          onClick={fetchProfile}
+          onClick={() => setRefreshIndex((v) => v + 1)}
           className="mt-3 rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"
         >
           Try Again

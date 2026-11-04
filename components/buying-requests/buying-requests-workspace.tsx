@@ -5,7 +5,6 @@ import {
   ClipboardList,
   Plus,
   Search,
-  Filter,
   CheckCircle2,
   XCircle,
   Clock,
@@ -14,19 +13,12 @@ import {
   Send,
   Edit,
   Ban,
-  Tag,
   Calendar,
   MapPin,
   TrendingUp,
   RefreshCw,
   X,
   Check,
-  Building,
-  User,
-  Phone,
-  Mail,
-  ChevronRight,
-  ArrowRight,
   ShieldCheck,
   CheckCheck,
 } from "lucide-react";
@@ -190,54 +182,51 @@ export function BuyingRequestsWorkspace() {
 
   useEffect(() => {
     let active = true;
-    const load = async () => {
-      try {
-        const params = new URLSearchParams({
-          page: "1",
-          limit: "10",
-          view: activeTab,
-        });
-        if (search.trim()) params.set("search", search.trim());
-        if (commodityFilter !== "all") params.set("commodity", commodityFilter);
-        if (statusFilter !== "all") params.set("status", statusFilter);
-
-        const res = await fetch(`/api/buying-requests?${params.toString()}`);
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({})) as { error?: string };
-          throw new Error(errData.error || `Server error (${res.status})`);
-        }
-        const data = await res.json();
-        if (!active) return;
-        setRequests(data.requests || []);
-        setTotal(data.total || 0);
-        setPages(data.pages || 1);
-        setPage(data.page || 1);
-        if (data.availableCommodities) setAvailableCommodities(data.availableCommodities);
-        if (data.currentUser) setCurrentUser(data.currentUser);
-      } catch (err) {
-        if (active) {
-          console.error(err);
-          setFeedback({
-            type: "error",
-            message: err instanceof Error ? err.message : "Failed to load requests. Please refresh.",
+    const timer = setTimeout(() => {
+      const load = async () => {
+        try {
+          const params = new URLSearchParams({
+            page: "1",
+            limit: "10",
+            view: activeTab,
           });
+          if (search.trim()) params.set("search", search.trim());
+          if (commodityFilter !== "all") params.set("commodity", commodityFilter);
+          if (statusFilter !== "all") params.set("status", statusFilter);
+
+          const res = await fetch(`/api/buying-requests?${params.toString()}`);
+          if (!res.ok) {
+            const errData = (await res.json().catch(() => ({}))) as { error?: string };
+            throw new Error(errData.error || `Server error (${res.status})`);
+          }
+          const data = await res.json();
+          if (!active) return;
+          setRequests(data.requests || []);
+          setTotal(data.total || 0);
+          setPages(data.pages || 1);
+          setPage(data.page || 1);
+          if (data.availableCommodities) setAvailableCommodities(data.availableCommodities);
+          if (data.currentUser) setCurrentUser(data.currentUser);
+        } catch (err) {
+          if (active) {
+            console.error(err);
+            setFeedback({
+              type: "error",
+              message: err instanceof Error ? err.message : "Failed to load requests. Please refresh.",
+            });
+          }
+        } finally {
+          if (active) setLoading(false);
         }
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    void load();
+      };
+      void load();
+    }, 250);
+
     return () => {
       active = false;
+      clearTimeout(timer);
     };
-  }, [activeTab, commodityFilter, statusFilter]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchRequests(1);
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [search]);
+  }, [activeTab, commodityFilter, statusFilter, search]);
 
   // Load offers for a request
   const openCompareOffers = async (req: BuyingRequestItem) => {
@@ -1422,7 +1411,7 @@ export function BuyingRequestsWorkspace() {
                   Review competitive bids from sellers. Accepting an offer will confirm the deal and reject all other pending offers.
                 </div>
 
-                {requestOffers.map((offer, idx) => {
+                {requestOffers.map((offer) => {
                   const isAccepted = offer.status === "Accepted";
                   const isRejected = offer.status === "Rejected";
                   const isWithdrawn = offer.status === "Withdrawn";

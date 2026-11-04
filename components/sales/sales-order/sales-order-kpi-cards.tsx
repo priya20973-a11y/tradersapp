@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Clock, ShoppingCart, TrendingUp, Truck } from "lucide-react";
+import { CheckCircle2, Clock, TrendingUp, Truck } from "lucide-react";
 import { currency, type SalesOrderDocument } from "./sales-order-types";
 
 interface SalesOrderKpiCardsProps {

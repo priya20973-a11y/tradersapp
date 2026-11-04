@@ -11,7 +11,6 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
-  Image as ImageIcon,
   Landmark,
   ShieldCheck,
   Upload,
@@ -20,7 +19,6 @@ import {
 import {
   INDIAN_STATES,
   PAN_REGEX,
-  AADHAAR_REGEX,
   GSTIN_REGEX,
   IFSC_REGEX,
   formatAadhaarDisplay,

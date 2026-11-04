@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Building2,
-  CheckCircle2,
   Layers,
   Loader2,
   MapPin,

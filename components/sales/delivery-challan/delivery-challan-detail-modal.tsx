@@ -3,8 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import {
-  Calendar,
-  CheckCircle,
   Download,
   Edit2,
   FileText,
@@ -42,7 +40,7 @@ export function DeliveryChallanDetailModal({
     try {
       setDownloading(true);
       await downloadDeliveryChallanPDF(challan, challan.customerSnapshot);
-    } catch (err) {
+    } catch {
       alert("Failed to download PDF.");
     } finally {
       setDownloading(false);
@@ -53,7 +51,7 @@ export function DeliveryChallanDetailModal({
     try {
       setPrinting(true);
       await printDeliveryChallan(challan, challan.customerSnapshot);
-    } catch (err) {
+    } catch {
       alert("Failed to print delivery challan.");
     } finally {
       setPrinting(false);

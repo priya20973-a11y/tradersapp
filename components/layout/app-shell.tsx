@@ -5,9 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowRightLeft,
-  BadgeDollarSign,
   BarChart3,
-  BriefcaseBusiness,
   Building2,
   Calculator,
   ChevronDown,
@@ -24,7 +22,6 @@ import {
   ShoppingBag,
   ShoppingCart,
   Store,
-  UserCheck,
   WalletCards,
 } from "lucide-react";
 import type { ReactNode } from "react";

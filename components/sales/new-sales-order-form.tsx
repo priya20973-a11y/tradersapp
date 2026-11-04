@@ -60,7 +60,6 @@ export function NewSalesOrderForm({
   // Line items & calculations from hook
   const {
     rows,
-    setRows,
     updateRow,
     handleSelectItem,
     addRow,

@@ -1,22 +1,19 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Search,
-  Filter,
   Bookmark,
   BookmarkCheck,
   Phone,
   Mail,
   MapPin,
-  Building2,
   ShieldCheck,
   Star,
   MessageSquare,
   Plus,
   RefreshCw,
   Eye,
-  SlidersHorizontal,
   X,
   Send,
   CheckCircle2,
@@ -59,7 +56,6 @@ export function BuyerDirectory() {
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [isPending, startTransition] = useTransition();
 
   // Filter state
   const [search, setSearch] = useState("");
@@ -141,7 +137,7 @@ export function BuyerDirectory() {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const fetchBuyers = async (targetPage = page) => {
+  const fetchBuyers = useCallback(async (targetPage = 1) => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -182,14 +178,14 @@ export function BuyerDirectory() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [search, selectedCommodity, selectedState, selectedBusinessType, minQty, maxQty, savedOnly]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchBuyers(1);
     }, 250);
     return () => clearTimeout(timer);
-  }, [search, selectedCommodity, selectedState, selectedBusinessType, minQty, maxQty, savedOnly]);
+  }, [fetchBuyers]);
 
   const toggleSaveBuyer = async (buyer: BuyerItem) => {
     setSavingId(buyer.id);

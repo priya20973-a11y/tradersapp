@@ -5,17 +5,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
-  Boxes,
-  Building2,
-  Check,
-  ChevronDown,
-  HelpCircle,
-  Info,
   Package,
-  Percent,
   Sparkles,
   Tag,
-  TrendingUp,
   Truck,
   X,
 } from "lucide-react";

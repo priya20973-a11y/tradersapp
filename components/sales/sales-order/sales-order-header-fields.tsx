@@ -1,6 +1,6 @@
 "use client";
 
-import { Calendar, HelpCircle, Info, Plus, Search, Settings, User } from "lucide-react";
+import { Info, Plus, Search, Settings } from "lucide-react";
 import {
   type CustomerOption,
   deliveryMethods,

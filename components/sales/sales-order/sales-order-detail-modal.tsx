@@ -4,7 +4,6 @@ import {
   Building2,
   Calendar,
   CheckCircle2,
-  Clock,
   CreditCard,
   Mail,
   Printer,
