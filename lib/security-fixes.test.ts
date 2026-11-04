@@ -206,6 +206,9 @@ describe("Security Audits & Hardening Verification", () => {
       expect(csp).toContain("object-src 'none'");
       expect(csp).toContain("frame-ancestors 'none'");
       expect(csp).toContain("base-uri 'self'");
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store, max-age=0, must-revalidate");
+      expect(response.headers.get("x-middleware-request-x-nonce")).toBe(nonce);
+      expect(response.headers.get("x-middleware-request-content-security-policy")).toBe(csp);
     });
 
     it("generates different nonces for consecutive requests", async () => {

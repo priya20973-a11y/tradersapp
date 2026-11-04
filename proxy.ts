@@ -34,6 +34,7 @@ function isSuperAdminOnly(pathname: string): boolean {
 
 function withSecurityHeaders(response: NextResponse, cspHeader: string, nonce: string): NextResponse {
   response.headers.set("Content-Security-Policy", cspHeader);
+  response.headers.set("Cache-Control", "private, no-store, max-age=0, must-revalidate");
   response.headers.set("x-nonce", nonce);
   return response;
 }
