@@ -1,9 +1,9 @@
 import { isValidObjectId } from "mongoose";
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { authOptions, canAccessRole } from "@/lib/auth";
+import { requirePermission, type AuthUser } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { AuditEvent, Organization } from "@/models";
+import { AppError } from "@/lib/errors";
 import type { ClientSession } from "mongoose";
 
 export type TradingPermission =
@@ -41,11 +41,17 @@ function errorResponse(message: string, status: number) {
 export async function getTradingScope(
   requestedOrganizationId: string | undefined,
   permission: TradingPermission,
+  options?: { req?: Request },
 ): Promise<ScopeResult> {
-  const session = await getServerSession(authOptions);
-  const user = session?.user;
-  if (!user) return errorResponse("Sign in to access trading.", 401);
-  if (!canAccessRole(user.role, permission)) return errorResponse("You do not have permission to perform this action.", 403);
+  let user: AuthUser;
+  try {
+    user = await requirePermission(permission, options);
+  } catch (error) {
+    if (error instanceof AppError) {
+      return errorResponse(error.message, error.statusCode);
+    }
+    return errorResponse("Authentication failed.", 401);
+  }
 
   await connectToDatabase();
   if (user.id !== "admin") {
@@ -68,7 +74,7 @@ export async function getTradingScope(
   if (!requestedOrganizationId || !isValidObjectId(requestedOrganizationId)) {
     return errorResponse("Select an organization to manage its trading data.", 400);
   }
-  const organization = await Organization.findById(requestedOrganizationId).select("_id");
+  const organization = await Organization.findOne({ _id: requestedOrganizationId, status: "active" }).select("_id");
   if (!organization) return errorResponse("The selected organization was not found.", 404);
   return {
     scope: {

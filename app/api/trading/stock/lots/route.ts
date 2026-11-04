@@ -89,6 +89,16 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   let session: Awaited<ReturnType<typeof startSession>> | undefined;
   try {
+    // SECURITY: Read organizationId from session FIRST, never from request body.
+    // The client must supply organizationId only for admin users via query param,
+    // and getTradingScope validates it against the session.
+    const url = new URL(request.url);
+    const scopeResult = await getTradingScope(
+      url.searchParams.get("organizationId") ?? undefined,
+      "manage-stock-lots",
+    );
+    if ("response" in scopeResult) return scopeResult.response;
+
     let payload: unknown;
     try {
       payload = await request.json();
@@ -99,12 +109,6 @@ export async function POST(request: Request) {
     if (!parsed.success) {
       return NextResponse.json({ error: "Check the stock lot details and try again.", issues: parsed.error.issues }, { status: 400 });
     }
-    const organizationId =
-      typeof payload === "object" && payload !== null && "organizationId" in payload
-        ? String(payload.organizationId)
-        : undefined;
-    const scopeResult = await getTradingScope(organizationId, "manage-stock-lots");
-    if ("response" in scopeResult) return scopeResult.response;
     const orgId = scopeResult.scope.organizationId;
     const input = parsed.data;
     const [commodity, warehouse] = await Promise.all([

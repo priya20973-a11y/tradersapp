@@ -22,7 +22,7 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 
 ## Trading module
 
-The vertical Sales menu includes trader profiles, commodity masters (extensions of existing inventory items), commodity deals, warehouses, stock lots, trader ledger/payments, reports, and the trading audit log. Organization users are scoped to their own organization; the admin selects an organization before managing its trading data.
+The vertical Sales menu includes trader profiles, warehouses, and stock lots. Organization users are scoped to their own organization; the admin selects an organization before managing its trading data.
 
 Sales customers have a searchable directory and a dedicated creation page with customer type, contact details, tax identifiers, opening balance, payment terms, addresses, reporting tags, and remarks. Customer portal access and document uploads are not configured.
 
@@ -36,11 +36,11 @@ openssl rand -base64 32
 
 Store the result as a secret; do not commit it. The API refuses bank-detail writes if the key is missing or invalid. Bank account numbers are encrypted with AES-256-GCM and are never returned in plaintext.
 
-Stock movement, payment allocation, deal settlement, and linked trader/customer/vendor updates use MongoDB transactions. Use MongoDB Atlas or a replica-set deployment; standalone MongoDB deployments cannot safely run these workflows. Stock movements are idempotent, organization-scoped, audited, and reject negative available stock.
+Stock movement, stock reservation, and linked trader/customer/vendor updates use MongoDB transactions. Use MongoDB Atlas or a replica-set deployment; standalone MongoDB deployments cannot safely run these workflows. Stock movements are idempotent, organization-scoped, audited, and reject negative available stock.
 
 Trader imports accept CSV or Excel files with a header row (up to 100 rows per import). Recognized columns include Trader Code, Legal Business Name, Trade Name, Business Type, Roles, Commodities, GSTIN, PAN, Contact Name, Mobile, Email, City, State, Credit Limit, Credit Period Days, Opening Receivable, and Opening Payable. Each row is validated by the same API as manual entry; failures are reported by source row.
 
-The current ledger and reports are operational summaries over trader opening balances, sales invoices/credits/receipts, deals, stock lots, and trading payments. They do **not** post double-entry journal entries. Supplier payments can be recorded as advances, but purchase bills and bill allocation are not implemented. Secure document upload/storage is also not configured; do not collect KYC documents until a persistent private storage provider and access policy are selected.
+Supplier payments can be recorded as advances, but purchase bills and bill allocation are not implemented. Secure document upload/storage is also not configured; do not collect KYC documents until a persistent private storage provider and access policy are selected.
 
 ## Learn More
 

@@ -286,7 +286,7 @@ export function AdminOrganizations() {
                             type="button"
                             onClick={() => void runAction(organization, "approve")}
                             disabled={Boolean(busyId)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                           >
                             <Check className="h-3.5 w-3.5" /> Approve
                           </button>
@@ -386,6 +386,9 @@ export function AdminOrganizations() {
             <p>
               Share this temporary password securely with <strong>{temporaryPassword.user.name}</strong> ({temporaryPassword.user.email}) for{" "}
               <strong>{temporaryPassword.organizationName}</strong>. It will only be shown here once.
+            </p>
+            <p className="mt-2 text-xs font-medium text-amber-800">
+              ✓ The user will be required to change this temporary password at their next login.
             </p>
           </div>
           <div className="mt-4 flex items-center gap-2">

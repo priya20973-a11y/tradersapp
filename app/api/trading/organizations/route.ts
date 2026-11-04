@@ -1,28 +1,39 @@
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { authOptions, canAccessRole } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { tradingDatabaseUnavailable } from "@/lib/trading-access";
 import { Organization } from "@/models";
+import { AppError } from "@/lib/errors";
 
-export async function GET() {
-  const session = await getServerSession(authOptions);
-  const user = session?.user;
-  if (!user) return NextResponse.json({ error: "Sign in to access trading." }, { status: 401 });
-  if (!canAccessRole(user.role, "view-traders")) {
-    return NextResponse.json({ error: "You do not have permission to view trading data." }, { status: 403 });
+export async function GET(request: Request) {
+  let authUser;
+  try {
+    authUser = await requirePermission("view-traders", request);
+  } catch (error) {
+    if (error instanceof AppError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
+
   try {
     await connectToDatabase();
-    const organizations = user.id === "admin"
+    const organizations = authUser.id === "admin"
       ? await Organization.find({ status: "active" }).select("_id name").sort({ name: 1 }).lean()
-      : user.organizationId
-        ? await Organization.find({ _id: user.organizationId, status: "active" }).select("_id name").lean()
+      : authUser.organizationId
+        ? await Organization.find({ _id: authUser.organizationId, status: "active" }).select("_id name").lean()
         : [];
-    return NextResponse.json({
-      organizations: organizations.map((organization) => ({ id: String(organization._id), name: organization.name })),
-      isAdmin: user.id === "admin",
-    });
+    return NextResponse.json(
+      {
+        organizations: organizations.map((organization) => ({ id: String(organization._id), name: organization.name })),
+        isAdmin: authUser.id === "admin",
+      },
+      {
+        headers: {
+          "Cache-Control": "private, max-age=15, stale-while-revalidate=30",
+        },
+      },
+    );
   } catch (error) {
     return tradingDatabaseUnavailable(error);
   }

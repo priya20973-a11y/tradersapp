@@ -1,0 +1,105 @@
+version: "3.9"
+
+# ════════════════════════════════════════════════════════════════
+# Traders ERP — Docker Compose
+# ════════════════════════════════════════════════════════════════
+# Starts:
+#   - MongoDB in single-node replica-set mode (required for multi-
+#     document transactions used by the stock and payment engines)
+#   - App (Next.js) — optional; use `npm run dev` locally instead
+#
+# Quick start:
+#   docker compose up -d mongo
+#   (then run the app locally: npm run dev)
+#
+# Full stack:
+#   docker compose up -d
+# ════════════════════════════════════════════════════════════════
+
+services:
+  # ── MongoDB single-node replica set ─────────────────────────────
+  mongo:
+    image: mongo:7.0
+    container_name: traders-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: traders
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+      # Init script runs once on first startup to initialise the replica set
+      - ./scripts/docker/mongo-rs-init.js:/docker-entrypoint-initdb.d/00-rs-init.js:ro
+    command: mongod --replSet rs0 --bind_ip_all --quiet
+    healthcheck:
+      test: |
+        mongosh --quiet --eval "
+          try {
+            const s = rs.status();
+            if (s.ok === 1) quit(0);
+            quit(1);
+          } catch(e) {
+            quit(1);
+          }
+        "
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ── Replica set initialiser (one-shot sidecar) ───────────────────
+  # Runs rs.initiate() if the replica set is not yet configured.
+  mongo-init:
+    image: mongo:7.0
+    container_name: traders-mongo-init
+    restart: "no"
+    depends_on:
+      - mongo
+    entrypoint: >
+      bash -c "
+        echo 'Waiting for MongoDB to be ready...';
+        until mongosh --host mongo --quiet --eval 'db.runCommand({ping:1})' > /dev/null 2>&1; do
+          sleep 1;
+        done;
+        echo 'Initialising replica set...';
+        mongosh --host mongo --quiet --eval '
+          try {
+            rs.status();
+            print(\"Replica set already initialised.\");
+          } catch(e) {
+            rs.initiate({
+              _id: \"rs0\",
+              members: [{ _id: 0, host: \"mongo:27017\" }]
+            });
+            print(\"Replica set initialised.\");
+          }
+        ';
+      "
+
+  # ── Next.js application (optional — prefer npm run dev locally) ──
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: traders-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.local
+    environment:
+      # Override MONGODB_URI to use the docker-compose service hostname
+      MONGODB_URI: mongodb://mongo:27017/traders?replicaSet=rs0&directConnection=true
+    depends_on:
+      mongo:
+        condition: service_healthy
+    profiles:
+      # Only start the app container with: docker compose --profile full up
+      - full
+
+volumes:
+  mongo_data:
+    driver: local
+  mongo_config:
+    driver: local

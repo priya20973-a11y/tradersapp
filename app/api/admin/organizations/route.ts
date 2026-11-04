@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { isValidObjectId, startSession, Types } from "mongoose";
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authOptions } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
+import { AppError } from "@/lib/errors";
 import { connectToDatabase } from "@/lib/db";
 import {
   AuditEvent,
@@ -43,15 +43,39 @@ const actionSchema = z.discriminatedUnion("action", [
     action: z.literal("reset-password"),
     organizationId: z.string().refine(isValidObjectId),
     userId: z.string().refine(isValidObjectId),
+    requirePasswordChange: z.boolean().optional().default(true),
+  }),
+  z.object({
+    action: z.literal("update-role"),
+    organizationId: z.string().refine(isValidObjectId),
+    userId: z.string().refine(isValidObjectId),
+    role: z.enum([
+      "Super Admin",
+      "Organization Owner",
+      "Administrator",
+      "Accountant",
+      "Sales Manager",
+      "Sales Executive",
+      "Purchase Manager",
+      "Inventory Manager",
+      "Read-Only Auditor",
+    ]),
   }),
 ]);
 
-async function requireAdmin() {
-  const session = await getServerSession(authOptions);
-  if (session?.user?.id !== "admin") {
+async function requireAdmin(request?: Request) {
+  try {
+    const authUser = await requirePermission("all", request ? { req: request } : undefined);
+    if (authUser.id !== "admin" && authUser.role !== "Super Admin") {
+      return NextResponse.json({ error: "Only the administrator can manage organizations." }, { status: 403 });
+    }
+    return null;
+  } catch (error) {
+    if (error instanceof AppError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
     return NextResponse.json({ error: "Only the administrator can manage organizations." }, { status: 403 });
   }
-  return null;
 }
 
 async function parseBody(request: Request) {
@@ -64,8 +88,8 @@ async function parseBody(request: Request) {
   return { body };
 }
 
-export async function GET() {
-  const denied = await requireAdmin();
+export async function GET(request: Request) {
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   try {
@@ -105,7 +129,7 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const denied = await requireAdmin();
+  const denied = await requireAdmin(request);
   if (denied) return denied;
   const parsedBody = await parseBody(request);
   if ("error" in parsedBody) return parsedBody.error;
@@ -142,23 +166,73 @@ export async function PATCH(request: Request) {
       });
     }
 
-    const organization = await Organization.findOne({ _id: input.organizationId }).select("_id");
+    if (input.action === "update-role") {
+      const organization = await Organization.findOne({ _id: input.organizationId }).select("_id");
+      if (!organization) return NextResponse.json({ error: "Organization not found." }, { status: 404 });
+
+      const updatedUser = await User.findOneAndUpdate(
+        { _id: input.userId, organizationId: input.organizationId, isDeleted: { $ne: true } },
+        {
+          $set: { role: input.role },
+          $inc: { authzVersion: 1, authVersion: 1 },
+        },
+        { new: true },
+      ).select("_id name email role authzVersion authVersion");
+
+      if (!updatedUser) {
+        return NextResponse.json({ error: "User not found in this organization." }, { status: 404 });
+      }
+
+      return NextResponse.json({
+        ok: true,
+        message: `User role updated to ${input.role}.`,
+        user: {
+          id: String(updatedUser._id),
+          name: updatedUser.name,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          authzVersion: updatedUser.authzVersion,
+        },
+      });
+    }
+
+    const organization = await Organization.findOne({ _id: input.organizationId }).select("_id name");
     if (!organization) return NextResponse.json({ error: "Organization not found." }, { status: 404 });
-    const owner = await User.findOne({
+    const targetUser = await User.findOne({
       _id: input.userId,
       organizationId: input.organizationId,
-      role: "Organization Owner",
+      isDeleted: { $ne: true },
     });
-    if (!owner) return NextResponse.json({ error: "Organization owner not found." }, { status: 404 });
+    if (!targetUser) return NextResponse.json({ error: "User account not found in this organization." }, { status: 404 });
 
     const temporaryPassword = randomBytes(18).toString("base64url");
-    owner.passwordHash = await bcrypt.hash(temporaryPassword, 12);
-    owner.authVersion = Number(owner.authVersion ?? 0) + 1;
-    await owner.save();
+    targetUser.passwordHash = await bcrypt.hash(temporaryPassword, 12);
+    targetUser.authzVersion = Number(targetUser.authzVersion ?? targetUser.authVersion ?? 0) + 1;
+    targetUser.authVersion = targetUser.authzVersion;
+    targetUser.mustChangePassword = input.requirePasswordChange ?? true;
+    targetUser.failedLoginCount = 0;
+    targetUser.lockedUntil = null;
+    await targetUser.save();
+
+    await AuditEvent.create({
+      organizationId: organization._id,
+      actorId: "admin",
+      action: "auth.admin_reset_password",
+      entityType: "User",
+      entityId: String(targetUser._id),
+      changes: {
+        userEmail: targetUser.email,
+        requirePasswordChange: input.requirePasswordChange ?? true,
+        resetAt: new Date().toISOString(),
+      },
+      occurredAt: new Date(),
+    });
+
     return NextResponse.json({
       ok: true,
       temporaryPassword,
-      user: { id: String(owner._id), name: owner.name, email: owner.email },
+      requirePasswordChange: targetUser.mustChangePassword,
+      user: { id: String(targetUser._id), name: targetUser.name, email: targetUser.email },
     });
   } catch (error) {
     console.error("Admin organization update failed.", error);
@@ -194,7 +268,7 @@ const organizationModels = [
 ];
 
 export async function DELETE(request: Request) {
-  const denied = await requireAdmin();
+  const denied = await requireAdmin(request);
   if (denied) return denied;
   const parsedBody = await parseBody(request);
   if ("error" in parsedBody) return parsedBody.error;

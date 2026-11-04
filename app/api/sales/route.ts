@@ -1,446 +1,45 @@
-import { isValidObjectId, Types } from "mongoose";
+import { isValidObjectId, type Types } from "mongoose";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import { Customer, DocumentSequence, Organization, SalesDocument } from "@/models";
-
-type DocumentType =
-  | "Quote"
-  | "Sales Order"
-  | "Invoice"
-  | "Recurring Invoice"
-  | "Delivery Challan"
-  | "Payment Received"
-  | "Credit Note";
-const paymentMethods = ["Cash", "Bank", "UPI", "Cheque"] as const;
-const frequencyOptions = ["Weekly", "Monthly", "Quarterly", "Yearly"] as const;
-
-const createSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("Customer"),
-    name: z.string().trim().min(2).max(120),
-    customerType: z.enum(["Business", "Individual"]).default("Business"),
-    salutation: z.string().trim().max(20).optional(),
-    firstName: z.string().trim().max(80).optional(),
-    lastName: z.string().trim().max(80).optional(),
-    companyName: z.string().trim().max(160).optional(),
-    contactPerson: z.string().trim().max(160).optional(),
-    email: z.union([z.email(), z.literal("")]).optional(),
-    phone: z.string().trim().max(30).optional(),
-    mobile: z.string().trim().max(30).optional(),
-    gstin: z.string().trim().toUpperCase().max(20).optional(),
-    pan: z.string().trim().toUpperCase().max(10).optional(),
-    state: z.string().trim().max(100).optional(),
-    customerLanguage: z.string().trim().max(50).default("English"),
-    currency: z.string().trim().max(10).default("INR"),
-    openingBalance: z.coerce.number().min(0).max(1_000_000_000).default(0),
-    paymentTerms: z.string().trim().max(100).default("Due on Receipt"),
-    allowPortal: z.boolean().default(false),
-    billingAddress: z.object({
-      attention: z.string().trim().max(120).optional(),
-      street: z.string().trim().max(250).optional(),
-      city: z.string().trim().max(100).optional(),
-      state: z.string().trim().max(100).optional(),
-      postalCode: z.string().trim().max(20).optional(),
-      country: z.string().trim().max(100).optional(),
-    }).optional(),
-    shippingAddress: z.object({
-      attention: z.string().trim().max(120).optional(),
-      street: z.string().trim().max(250).optional(),
-      city: z.string().trim().max(100).optional(),
-      state: z.string().trim().max(100).optional(),
-      postalCode: z.string().trim().max(20).optional(),
-      country: z.string().trim().max(100).optional(),
-    }).optional(),
-    contactPersons: z.array(z.object({
-      name: z.string().trim().max(120),
-      email: z.union([z.email(), z.literal("")]).optional(),
-      phone: z.string().trim().max(30).optional(),
-      mobile: z.string().trim().max(30).optional(),
-    })).max(20).default([]),
-    customFields: z.array(z.object({
-      label: z.string().trim().max(80),
-      value: z.string().trim().max(250),
-    })).max(30).default([]),
-    reportingTags: z.array(z.string().trim().min(1).max(50)).max(30).default([]),
-    remarks: z.string().trim().max(2000).optional(),
-  }),
-  z.object({
-    type: z.enum(["Quote", "Sales Order", "Invoice"]),
-    customerId: z.string().refine(isValidObjectId),
-    total: z.coerce.number().positive().max(1_000_000_000),
-    issueDate: z.iso.date().optional(),
-    dueDate: z.iso.date().optional(),
-    notes: z.string().trim().max(1000).optional(),
-  }),
-  z.object({
-    type: z.literal("Recurring Invoice"),
-    customerId: z.string().refine(isValidObjectId),
-    total: z.coerce.number().positive().max(1_000_000_000),
-    frequency: z.enum(frequencyOptions),
-    nextRunDate: z.iso.date(),
-    notes: z.string().trim().max(1000).optional(),
-  }),
-  z.object({
-    type: z.literal("Delivery Challan"),
-    customerId: z.string().refine(isValidObjectId),
-    relatedDocumentId: z.string().refine(isValidObjectId).optional(),
-    notes: z.string().trim().max(1000).optional(),
-  }),
-  z.object({
-    type: z.literal("Payment Received"),
-    relatedDocumentId: z.string().refine(isValidObjectId),
-    total: z.coerce.number().positive().max(1_000_000_000),
-    method: z.enum(paymentMethods),
-    referenceNumber: z.string().trim().max(100).optional(),
-  }),
-  z.object({
-    type: z.literal("Credit Note"),
-    relatedDocumentId: z.string().refine(isValidObjectId),
-    total: z.coerce.number().positive().max(1_000_000_000),
-    notes: z.string().trim().max(1000).optional(),
-  }),
-]);
-
-const transitionSchema = z.object({
-  documentId: z.string().refine(isValidObjectId),
-  status: z.string(),
-});
-const commandSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("convert-quote"), documentId: z.string().refine(isValidObjectId) }),
-  z.object({ action: z.literal("invoice-from-order"), documentId: z.string().refine(isValidObjectId) }),
-  z.object({ action: z.literal("generate-recurring"), documentId: z.string().refine(isValidObjectId) }),
-]);
-
-function respondError(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status });
-}
-
-function isDatabaseConnectionError(error: unknown) {
-  return (
-    error instanceof Error &&
-    /MongooseServerSelectionError|buffering timed out|querySrv|ECONNREFUSED|ETIMEDOUT|ENOTFOUND/.test(error.message)
-  );
-}
-
-function databaseUnavailable(error: unknown) {
-  console.error("Sales API database connection failed.", error);
-  return respondError("Sales data is temporarily unavailable. Check the MongoDB connection and try again.", 503);
-}
-
-async function getSalesScope(requestedOrganizationId?: string) {
-  const session = await getServerSession(authOptions);
-  const user = session?.user;
-  if (!user) {
-    return { error: respondError("Sign in to access sales.", 401) } as const;
-  }
-
-  if (user.id !== "admin") {
-    const organizationId = user.organizationId;
-    if (!organizationId || !isValidObjectId(organizationId)) {
-      return { error: respondError("Your account is not linked to an organization.", 403) } as const;
-    }
-    if (requestedOrganizationId && requestedOrganizationId !== organizationId) {
-      return { error: respondError("You can only access your own organization.", 403) } as const;
-    }
-    return { organizationId, isAdmin: false } as const;
-  }
-
-  if (!requestedOrganizationId || !isValidObjectId(requestedOrganizationId)) {
-    return { error: respondError("Select an organization to manage its sales.", 400) } as const;
-  }
-  const organization = await Organization.findById(requestedOrganizationId).select("_id");
-  if (!organization) {
-    return { error: respondError("The selected organization was not found.", 404) } as const;
-  }
-  return { organizationId: String(organization._id), isAdmin: true } as const;
-}
-
-async function nextNumber(organizationId: string, type: DocumentType) {
-  const prefixes: Record<DocumentType, string> = {
-    Quote: "QUO",
-    "Sales Order": "SO",
-    Invoice: "INV",
-    "Recurring Invoice": "REC",
-    "Delivery Challan": "DC",
-    "Payment Received": "PAY",
-    "Credit Note": "CN",
-  };
-  let sequence = await DocumentSequence.findOne({ organizationId, modelName: type });
-  if (!sequence) {
-    const count = await SalesDocument.countDocuments({ organizationId, type });
-    try {
-      sequence = await DocumentSequence.create({
-        organizationId,
-        prefix: prefixes[type],
-        modelName: type,
-        nextNumber: count,
-      });
-    } catch (error) {
-      if (!(typeof error === "object" && error !== null && "code" in error && error.code === 11000)) {
-        throw error;
-      }
-    }
-  }
-  const allocated = await DocumentSequence.findOneAndUpdate(
-    { organizationId, modelName: type },
-    { $inc: { nextNumber: 1 } },
-    { new: true },
-  );
-  if (!allocated) throw new Error(`Unable to allocate a number for ${type}.`);
-  return `${prefixes[type]}-${String(allocated.nextNumber).padStart(4, "0")}`;
-}
-
-function invoiceStatus(amountPaid: number, total: number, creditedAmount: number) {
-  if (amountPaid >= total - creditedAmount) return "Paid";
-  return amountPaid > 0 ? "Partly paid" : "Sent";
-}
-
-async function createPayment(
-  organizationId: string,
-  invoiceId: string,
-  total: number,
-  method: (typeof paymentMethods)[number],
-  referenceNumber?: string,
-) {
-  const invoice = await SalesDocument.findOne({
-    _id: invoiceId,
-    organizationId,
-    type: "Invoice",
-  });
-  if (!invoice) return respondError("Select a valid invoice in this organization.", 404);
-
-  const currentPaid = Number(invoice.amountPaid ?? 0);
-  const creditedAmount = Number(invoice.creditedAmount ?? 0);
-  const invoiceTotal = Number(invoice.total ?? 0);
-  if (total > invoiceTotal - creditedAmount - currentPaid) {
-    return respondError("The payment exceeds this invoice's remaining balance.", 400);
-  }
-
-  const receiptNumber = await nextNumber(organizationId, "Payment Received");
-  const receipt = await SalesDocument.create({
-    organizationId,
-    type: "Payment Received",
-    number: receiptNumber,
-    customerId: invoice.customerId,
-    relatedDocumentId: invoice._id,
-    status: "Posted",
-    total,
-    method,
-    referenceNumber,
-  });
-
-  try {
-    const updatedInvoice = await SalesDocument.findOneAndUpdate(
-      {
-        _id: invoice._id,
-        organizationId,
-        type: "Invoice",
-        amountPaid: currentPaid,
-        creditedAmount,
-      },
-      {
-        $inc: { amountPaid: total },
-        $set: { status: invoiceStatus(currentPaid + total, invoiceTotal, creditedAmount) },
-      },
-      { new: true },
-    );
-    if (!updatedInvoice) {
-      await SalesDocument.deleteOne({ _id: receipt._id, organizationId });
-      return respondError("The invoice changed while recording payment. Refresh and try again.", 409);
-    }
-
-  } catch (error) {
-    await SalesDocument.deleteOne({ _id: receipt._id, organizationId });
-    throw error;
-  }
-  return NextResponse.json({ ok: true, id: String(receipt._id) }, { status: 201 });
-}
-
-async function createCreditNote(organizationId: string, invoiceId: string, total: number, notes?: string) {
-  const invoice = await SalesDocument.findOne({
-    _id: invoiceId,
-    organizationId,
-    type: "Invoice",
-  });
-  if (!invoice) return respondError("Select a valid invoice in this organization.", 404);
-
-  const currentPaid = Number(invoice.amountPaid ?? 0);
-  const currentCredited = Number(invoice.creditedAmount ?? 0);
-  const invoiceTotal = Number(invoice.total ?? 0);
-  if (total > invoiceTotal - currentPaid - currentCredited) {
-    return respondError("The credit note exceeds this invoice's remaining balance.", 400);
-  }
-
-  const noteNumber = await nextNumber(organizationId, "Credit Note");
-  const creditNote = await SalesDocument.create({
-    organizationId,
-    type: "Credit Note",
-    number: noteNumber,
-    customerId: invoice.customerId,
-    relatedDocumentId: invoice._id,
-    status: "Issued",
-    total,
-    notes,
-  });
-
-  try {
-    const updatedInvoice = await SalesDocument.findOneAndUpdate(
-      {
-        _id: invoice._id,
-        organizationId,
-        type: "Invoice",
-        amountPaid: currentPaid,
-        creditedAmount: currentCredited,
-      },
-      {
-        $inc: { creditedAmount: total },
-        $set: { status: invoiceStatus(currentPaid, invoiceTotal, currentCredited + total) },
-      },
-      { new: true },
-    );
-    if (!updatedInvoice) {
-      await SalesDocument.deleteOne({ _id: creditNote._id, organizationId });
-      return respondError("The invoice changed while issuing this credit note. Refresh and try again.", 409);
-    }
-
-  } catch (error) {
-    await SalesDocument.deleteOne({ _id: creditNote._id, organizationId });
-    throw error;
-  }
-  return NextResponse.json({ ok: true, id: String(creditNote._id) }, { status: 201 });
-}
-
-async function createLinkedDocument(
-  organizationId: string,
-  sourceId: string,
-  sourceType: "Quote" | "Sales Order",
-  targetType: "Sales Order" | "Invoice",
-) {
-  const source = await SalesDocument.findOne({
-    _id: sourceId,
-    organizationId,
-    type: sourceType,
-  });
-  if (!source) return respondError(`${sourceType} not found.`, 404);
-  if (sourceType === "Quote" && ["Rejected", "Converted"].includes(source.status)) {
-    return respondError("Only open or accepted quotes can be converted.", 400);
-  }
-
-  const alreadyCreated = await SalesDocument.exists({
-    organizationId,
-    type: targetType,
-    relatedDocumentId: source._id,
-  });
-  if (alreadyCreated) return respondError(`This ${sourceType.toLowerCase()} already has a ${targetType.toLowerCase()}.`, 409);
-  if (targetType === "Invoice" && source.status === "Cancelled") {
-    return respondError("A cancelled sales order cannot be invoiced.", 400);
-  }
-
-  const number = await nextNumber(organizationId, targetType);
-  const sourceStatus = source.status;
-  const transition = await SalesDocument.updateOne(
-    {
-      _id: source._id,
-      organizationId,
-      status: sourceStatus,
-    },
-    { $set: { status: targetType === "Sales Order" ? "Converted" : "Invoiced" } },
-  );
-  if (transition.modifiedCount !== 1) {
-    return respondError("This record changed while it was being processed. Refresh and try again.", 409);
-  }
-
-  try {
-    const issueDate = new Date();
-    const dueDate = targetType === "Invoice" ? new Date(issueDate.getTime() + 30 * 24 * 60 * 60 * 1000) : undefined;
-    const document = await SalesDocument.create({
-      organizationId,
-      type: targetType,
-      number,
-      customerId: source.customerId,
-      relatedDocumentId: source._id,
-      status: targetType === "Invoice" ? "Sent" : "Draft",
-      total: Number(source.total ?? 0),
-      issueDate,
-      dueDate,
-    });
-    return NextResponse.json({ ok: true, id: String(document._id), number }, { status: 201 });
-  } catch (error) {
-    await SalesDocument.updateOne(
-      { _id: source._id, organizationId, status: targetType === "Sales Order" ? "Converted" : "Invoiced" },
-      { $set: { status: sourceStatus } },
-    );
-    throw error;
-  }
-}
-
-function getNextRunDate(date: Date, frequency: (typeof frequencyOptions)[number]) {
-  const next = new Date(date);
-  if (frequency === "Weekly") next.setDate(next.getDate() + 7);
-  if (frequency !== "Weekly") {
-    const originalDay = next.getDate();
-    const monthsToAdd = frequency === "Monthly" ? 1 : frequency === "Quarterly" ? 3 : 12;
-    next.setDate(1);
-    next.setMonth(next.getMonth() + monthsToAdd);
-    const lastDayOfMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
-    next.setDate(Math.min(originalDay, lastDayOfMonth));
-  }
-  return next;
-}
-
-async function generateRecurringInvoice(organizationId: string, recurringId: string) {
-  const recurring = await SalesDocument.findOne({
-    _id: recurringId,
-    organizationId,
-    type: "Recurring Invoice",
-    status: "Active",
-  });
-  if (!recurring || !recurring.nextRunDate || !recurring.frequency) {
-    return respondError("An active recurring invoice with a scheduled date is required.", 400);
-  }
-
-  const runDate = new Date(recurring.nextRunDate);
-  const nextRunDate = getNextRunDate(runDate, recurring.frequency as (typeof frequencyOptions)[number]);
-  const transition = await SalesDocument.updateOne(
-    { _id: recurring._id, organizationId, status: "Active", nextRunDate: recurring.nextRunDate },
-    { $set: { nextRunDate } },
-  );
-  if (transition.modifiedCount !== 1) {
-    return respondError("This schedule changed while it was being processed. Refresh and try again.", 409);
-  }
-
-  try {
-    const number = await nextNumber(organizationId, "Invoice");
-    const document = await SalesDocument.create({
-      organizationId,
-      type: "Invoice",
-      number,
-      customerId: recurring.customerId,
-      relatedDocumentId: recurring._id,
-      status: "Sent",
-      total: Number(recurring.total ?? 0),
-      issueDate: runDate,
-      dueDate: new Date(runDate.getTime() + 30 * 24 * 60 * 60 * 1000),
-    });
-    return NextResponse.json({ ok: true, id: String(document._id), number }, { status: 201 });
-  } catch (error) {
-    await SalesDocument.updateOne(
-      { _id: recurring._id, organizationId, nextRunDate },
-      { $set: { nextRunDate: runDate } },
-    );
-    throw error;
-  }
-}
+import { Customer, Organization, SalesDocument } from "@/models";
+import {
+  type DocumentType,
+  commandSchema,
+  createSchema,
+  transitionSchema,
+} from "./schemas";
+import {
+  createCreditNote,
+  createLinkedDocument,
+  createPayment,
+  databaseUnavailable,
+  generateRecurringInvoice,
+  getSalesScope,
+  isDatabaseConnectionError,
+  nextNumber,
+  respondError,
+} from "./sales-service";
+import { calculateQuoteTotals } from "@/lib/quote-tax-utils";
 
 async function getSales(request: Request) {
-  const requestedOrganizationId = new URL(request.url).searchParams.get("organizationId") ?? undefined;
+  let requestedOrganizationId = new URL(request.url).searchParams.get("organizationId") ?? undefined;
   const session = await getServerSession(authOptions);
   if (!session?.user) return respondError("Sign in to access sales.", 401);
 
   await connectToDatabase();
+
+  if (session.user.id === "admin" && !requestedOrganizationId) {
+    const customerIdParam = new URL(request.url).searchParams.get("customerId");
+    if (customerIdParam && isValidObjectId(customerIdParam)) {
+      const cust = await Customer.findById(customerIdParam).select("organizationId").lean();
+      if (cust?.organizationId) {
+        requestedOrganizationId = String(cust.organizationId);
+      }
+    }
+  }
+
   if (session.user.id === "admin" && !requestedOrganizationId) {
     const organizations = await Organization.find({ status: "active" }).select("_id name").sort({ name: 1 }).lean();
     return NextResponse.json({
@@ -454,8 +53,31 @@ async function getSales(request: Request) {
     });
   }
 
-  const scope = await getSalesScope(requestedOrganizationId);
+  const scope = await getSalesScope(requestedOrganizationId, session);
   if ("error" in scope) return scope.error;
+
+  const url = new URL(request.url);
+  const section = url.searchParams.get("section")?.toLowerCase();
+  const documentTypeFilter = url.searchParams.get("type");
+
+  const docQuery: Record<string, unknown> = { organizationId: scope.organizationId };
+  if (documentTypeFilter) {
+    docQuery.type = documentTypeFilter;
+  } else if (section === "quotes") {
+    docQuery.type = "Quote";
+  } else if (section === "orders") {
+    docQuery.type = "Sales Order";
+  } else if (section === "invoices") {
+    docQuery.type = "Invoice";
+  } else if (section === "recurring-invoices") {
+    docQuery.type = "Recurring Invoice";
+  } else if (section === "delivery-challans") {
+    docQuery.type = "Delivery Challan";
+  } else if (section === "payments-received") {
+    docQuery.type = "Payment Received";
+  } else if (section === "credit-notes") {
+    docQuery.type = "Credit Note";
+  }
 
   const [organization, allOrganizations, customers, documents] = await Promise.all([
     Organization.findById(scope.organizationId).select("_id name").lean(),
@@ -463,10 +85,9 @@ async function getSales(request: Request) {
       ? Organization.find({ status: "active" }).select("_id name").sort({ name: 1 }).lean()
       : Promise.resolve([]),
     Customer.find({ organizationId: scope.organizationId })
-      .select("_id name customerType companyName email phone mobile openingBalance creditLimit unusedCredits status")
       .sort({ name: 1 })
       .lean(),
-    SalesDocument.find({ organizationId: scope.organizationId }).sort({ createdAt: -1 }).lean(),
+    SalesDocument.find(docQuery).sort({ createdAt: -1 }).lean(),
   ]);
   if (!organization) return respondError("The selected organization was not found.", 404);
   return NextResponse.json({
@@ -486,25 +107,67 @@ async function getSales(request: Request) {
       creditLimit: Number(customer.creditLimit ?? 0),
       unusedCredits: Number(customer.unusedCredits ?? 0),
       status: customer.status ?? "Active",
+      gstin: customer.gstin ?? "",
+      pan: customer.pan ?? "",
+      state: customer.state ?? "",
+      customerLanguage: customer.customerLanguage ?? "English",
+      currency: customer.currency ?? "INR",
+      paymentTerms: customer.paymentTerms ?? "Due on Receipt",
+      billingAddress: customer.billingAddress,
+      shippingAddress: customer.shippingAddress,
+      contactPersons: customer.contactPersons ?? [],
+      customFields: customer.customFields ?? [],
+      reportingTags: customer.reportingTags ?? [],
+      remarks: customer.remarks ?? "",
+      comments: ((customer as unknown as Record<string, unknown>).comments as unknown[]) ?? [],
+      createdAt: customer.createdAt ? new Date(String(customer.createdAt)).toISOString() : "",
+      updatedAt: customer.updatedAt ? new Date(String(customer.updatedAt)).toISOString() : "",
     })),
-    documents: documents.map((document) => ({
-      id: String(document._id),
-      type: document.type,
-      number: document.number,
-      customerId: String(document.customerId),
-      relatedDocumentId: document.relatedDocumentId ? String(document.relatedDocumentId) : "",
-      status: document.status,
-      total: Number(document.total ?? 0),
-      amountPaid: Number(document.amountPaid ?? 0),
-      creditedAmount: Number(document.creditedAmount ?? 0),
-      issueDate: document.issueDate?.toISOString() ?? "",
-      dueDate: document.dueDate?.toISOString() ?? "",
-      nextRunDate: document.nextRunDate?.toISOString() ?? "",
-      frequency: document.frequency ?? "",
-      method: document.method ?? "",
-      referenceNumber: document.referenceNumber ?? "",
-      notes: document.notes ?? "",
-    })),
+    documents: documents.map((document) => {
+      const docRec = document as unknown as Record<string, unknown>;
+      return {
+        id: String(document._id),
+        type: document.type,
+        number: document.number,
+        customerId: String(document.customerId),
+        relatedDocumentId: document.relatedDocumentId ? String(document.relatedDocumentId) : "",
+        status: document.status,
+        total: Number(document.total ?? 0),
+        amountPaid: Number(document.amountPaid ?? 0),
+        creditedAmount: Number(document.creditedAmount ?? 0),
+        issueDate: document.issueDate?.toISOString() ?? "",
+        dueDate: document.dueDate?.toISOString() ?? "",
+        nextRunDate: document.nextRunDate?.toISOString() ?? "",
+        frequency: document.frequency ?? "",
+        method: document.method ?? "",
+        referenceNumber: document.referenceNumber ?? "",
+        notes: document.notes ?? "",
+        expiryDate: document.expiryDate?.toISOString() ?? "",
+        expectedShipmentDate: document.expectedShipmentDate?.toISOString() ?? "",
+        paymentTerms: document.paymentTerms ?? "",
+        deliveryMethod: document.deliveryMethod ?? "",
+        salesperson: document.salesperson ?? "",
+        projectName: document.projectName ?? "",
+        subject: document.subject ?? "",
+        customerNotes: document.customerNotes ?? "",
+        termsAndConditions: document.termsAndConditions ?? "",
+        subTotal: document.subTotal ?? 0,
+        discount: document.discount ?? 0,
+        discountType: document.discountType ?? "percent",
+        taxType: document.taxType ?? (document.type === "Quote" ? "GST" : "TDS"),
+        taxName: document.taxName ?? "",
+        taxRate: document.taxRate ?? 0,
+        taxAmount: document.taxAmount ?? 0,
+        tdsTcsType: (docRec.tdsTcsType as string) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxType : "None"),
+        tdsTcsName: (docRec.tdsTcsName as string) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxName : ""),
+        tdsTcsRate: (docRec.tdsTcsRate as number) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxRate : 0),
+        tdsTcsAmount: (docRec.tdsTcsAmount as number) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxAmount : 0),
+        adjustment: document.adjustment ?? 0,
+        items: document.items ?? [],
+        createdAt: document.createdAt ? new Date(String(document.createdAt)).toISOString() : "",
+        paymentDate: docRec.paymentDate ? new Date(String(docRec.paymentDate)).toISOString() : "",
+      };
+    }),
     isAdmin: scope.isAdmin,
   });
 }
@@ -526,14 +189,44 @@ async function postSales(request: Request) {
     return respondError("Submit valid JSON data.", 400);
   }
 
-  const requestedOrganizationId =
-    typeof payload === "object" && payload !== null && "organizationId" in payload
-      ? String(payload.organizationId)
+  await connectToDatabase();
+
+  const rawPayload = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
+  let requestedOrganizationId =
+    "organizationId" in rawPayload && rawPayload.organizationId
+      ? String(rawPayload.organizationId)
       : undefined;
+
+  if (!requestedOrganizationId) {
+    const urlOrgId = new URL(request.url).searchParams.get("organizationId");
+    if (urlOrgId && isValidObjectId(urlOrgId)) {
+      requestedOrganizationId = urlOrgId;
+    }
+  }
+
+  if (!requestedOrganizationId && "customerId" in rawPayload) {
+    const cid = String(rawPayload.customerId);
+    if (isValidObjectId(cid)) {
+      const targetCustomer = await Customer.findById(cid).select("organizationId").lean();
+      if (targetCustomer?.organizationId) {
+        requestedOrganizationId = String(targetCustomer.organizationId);
+      }
+    }
+  }
+
+  if (!requestedOrganizationId) {
+    const session = await getServerSession(authOptions);
+    if (session?.user?.id === "admin") {
+      const defaultOrg = await Organization.findOne({ status: "active" }).select("_id").lean();
+      if (defaultOrg) {
+        requestedOrganizationId = String(defaultOrg._id);
+      }
+    }
+  }
+
   const scope = await getSalesScope(requestedOrganizationId);
   if ("error" in scope) return scope.error;
-  await connectToDatabase();
-  const { organizationId } = scope;
+  let { organizationId } = scope;
 
   if (typeof payload === "object" && payload !== null && "action" in payload) {
     const command = commandSchema.safeParse(payload);
@@ -549,7 +242,9 @@ async function postSales(request: Request) {
 
   const data = createSchema.safeParse(payload);
   if (!data.success) {
-    return respondError("Check the required fields and try again.", 400);
+    const firstIssue = data.error.issues[0];
+    const fieldMsg = firstIssue ? ` (${firstIssue.path.join(".")}: ${firstIssue.message})` : "";
+    return respondError(`Check the required fields and try again.${fieldMsg}`, 400);
   }
 
   if (data.data.type === "Customer") {
@@ -602,13 +297,24 @@ async function postSales(request: Request) {
       : "customerId" in data.data
         ? data.data.customerId
         : undefined;
-  const customer = customerId
-    ? await Customer.findOne({ _id: customerId, organizationId }).select("_id")
+
+  let customer = customerId
+    ? await Customer.findOne({ _id: customerId, organizationId }).select("_id organizationId")
     : null;
-  if (!customer) return respondError("Select a customer in this organization.", 404);
+
+  if (!customer && customerId) {
+    const anyCustomer = await Customer.findById(customerId).select("_id organizationId");
+    if (!anyCustomer) return respondError("Select a customer in this organization.", 404);
+    if (scope.isAdmin && anyCustomer.organizationId) {
+      organizationId = String(anyCustomer.organizationId);
+      customer = anyCustomer;
+    } else {
+      return respondError("Select a customer in this organization.", 404);
+    }
+  }
 
   let relatedDocumentId: Types.ObjectId | undefined;
-  const status = "Draft";
+  const status = "status" in data.data && data.data.status ? data.data.status : "Draft";
   if (data.data.type === "Delivery Challan" && data.data.relatedDocumentId) {
     const order = await SalesDocument.findOne({
       _id: data.data.relatedDocumentId,
@@ -621,22 +327,88 @@ async function postSales(request: Request) {
   }
 
   const type = data.data.type as DocumentType;
-  const number = await nextNumber(organizationId, type);
-  const document = await SalesDocument.create({
+  const number =
+    "number" in data.data && data.data.number?.trim()
+      ? data.data.number.trim()
+      : await nextNumber(organizationId, type);
+
+  let verifiedTotal = "total" in data.data ? Number(data.data.total) : 0;
+  let verifiedTaxAmount = "taxAmount" in data.data ? data.data.taxAmount : undefined;
+  let verifiedTdsTcsAmount = "tdsTcsAmount" in data.data ? data.data.tdsTcsAmount : undefined;
+
+  if (type === "Quote" && "subTotal" in data.data && data.data.subTotal !== undefined) {
+    const verified = calculateQuoteTotals({
+      subTotal: Number(data.data.subTotal) || 0,
+      discountAmount: "discount" in data.data ? Number(data.data.discount) || 0 : 0,
+      gstRate: "taxRate" in data.data ? Number(data.data.taxRate) || 0 : 0,
+      tdsTcsType: "tdsTcsType" in data.data ? data.data.tdsTcsType : undefined,
+      tdsTcsRate: "tdsTcsRate" in data.data ? Number(data.data.tdsTcsRate) || 0 : 0,
+      adjustmentValue: "adjustment" in data.data ? Number(data.data.adjustment) || 0 : 0,
+    });
+    verifiedTaxAmount = verified.gstAmount;
+    verifiedTdsTcsAmount = verified.tdsTcsAmount;
+    verifiedTotal = verified.total;
+  }
+
+  const rawItems = "items" in data.data && Array.isArray(data.data.items) ? data.data.items : undefined;
+  const sanitizedItems = rawItems?.map((it) => ({
+    ...it,
+    itemId: it.itemId && isValidObjectId(it.itemId) ? it.itemId : undefined,
+  }));
+
+  const buildDocPayload = (docNumber: string) => ({
     organizationId,
     type,
-    number,
+    number: docNumber,
     customerId,
     relatedDocumentId,
     status,
-    total: "total" in data.data ? data.data.total : 0,
+    total: verifiedTotal,
     issueDate: "issueDate" in data.data && data.data.issueDate ? new Date(data.data.issueDate) : new Date(),
     dueDate: "dueDate" in data.data && data.data.dueDate ? new Date(data.data.dueDate) : undefined,
+    expiryDate: "expiryDate" in data.data && data.data.expiryDate ? new Date(data.data.expiryDate) : undefined,
+    expectedShipmentDate: "expectedShipmentDate" in data.data && data.data.expectedShipmentDate ? new Date(data.data.expectedShipmentDate) : undefined,
+    paymentTerms: "paymentTerms" in data.data ? data.data.paymentTerms : undefined,
+    deliveryMethod: "deliveryMethod" in data.data ? data.data.deliveryMethod : undefined,
+    salesperson: "salesperson" in data.data ? data.data.salesperson : undefined,
+    projectName: "projectName" in data.data ? data.data.projectName : undefined,
+    subject: "subject" in data.data ? data.data.subject : undefined,
+    customerNotes: "customerNotes" in data.data ? data.data.customerNotes : undefined,
+    termsAndConditions: "termsAndConditions" in data.data ? data.data.termsAndConditions : undefined,
+    subTotal: "subTotal" in data.data ? data.data.subTotal : undefined,
+    discount: "discount" in data.data ? data.data.discount : undefined,
+    discountType: "discountType" in data.data ? data.data.discountType : undefined,
+    taxType: "taxType" in data.data ? data.data.taxType : undefined,
+    taxName: "taxName" in data.data ? data.data.taxName : undefined,
+    taxRate: "taxRate" in data.data ? data.data.taxRate : undefined,
+    taxAmount: verifiedTaxAmount !== undefined ? verifiedTaxAmount : ("taxAmount" in data.data ? data.data.taxAmount : undefined),
+    tdsTcsType: "tdsTcsType" in data.data ? data.data.tdsTcsType : undefined,
+    tdsTcsName: "tdsTcsName" in data.data ? data.data.tdsTcsName : undefined,
+    tdsTcsRate: "tdsTcsRate" in data.data ? data.data.tdsTcsRate : undefined,
+    tdsTcsAmount: verifiedTdsTcsAmount !== undefined ? verifiedTdsTcsAmount : ("tdsTcsAmount" in data.data ? data.data.tdsTcsAmount : undefined),
+    adjustment: "adjustment" in data.data ? data.data.adjustment : undefined,
+    items: sanitizedItems,
+    referenceNumber: "referenceNumber" in data.data ? data.data.referenceNumber : undefined,
     nextRunDate: "nextRunDate" in data.data ? new Date(data.data.nextRunDate) : undefined,
     frequency: "frequency" in data.data ? data.data.frequency : undefined,
     notes: "notes" in data.data ? data.data.notes : undefined,
   });
-  return NextResponse.json({ ok: true, id: String(document._id), number }, { status: 201 });
+
+  try {
+    const document = await SalesDocument.create(buildDocPayload(number));
+    return NextResponse.json({ ok: true, id: String(document._id), number }, { status: 201 });
+  } catch (err: unknown) {
+    const mongoErr = typeof err === "object" && err !== null && "code" in err ? (err as { code: number }) : null;
+    if (mongoErr?.code === 11000) {
+      if ("number" in data.data && data.data.number?.trim()) {
+        return respondError(`A ${type.toLowerCase()} with number "${number}" already exists.`, 409);
+      }
+      const retryNumber = await nextNumber(organizationId, type);
+      const document = await SalesDocument.create(buildDocPayload(retryNumber));
+      return NextResponse.json({ ok: true, id: String(document._id), number: retryNumber }, { status: 201 });
+    }
+    throw err;
+  }
 }
 
 export async function POST(request: Request) {
@@ -702,3 +474,131 @@ export async function PATCH(request: Request) {
     throw error;
   }
 }
+
+async function putSales(request: Request) {
+  let payload: Record<string, unknown>;
+  try {
+    payload = await request.json();
+  } catch {
+    return respondError("Submit valid JSON data.", 400);
+  }
+  const documentId =
+    typeof payload.id === "string"
+      ? payload.id
+      : typeof payload.documentId === "string"
+        ? payload.documentId
+        : undefined;
+  if (!documentId) return respondError("Document ID is required.", 400);
+  if (!isValidObjectId(documentId)) return respondError("Sales document not found.", 404);
+
+  await connectToDatabase();
+
+  let requestedOrganizationId = payload.organizationId ? String(payload.organizationId) : undefined;
+  if (!requestedOrganizationId) {
+    const existingDoc = await SalesDocument.findById(documentId).select("organizationId").lean();
+    if (existingDoc?.organizationId) {
+      requestedOrganizationId = String(existingDoc.organizationId);
+    }
+  }
+  if (!requestedOrganizationId && typeof payload.customerId === "string" && isValidObjectId(payload.customerId)) {
+    const cust = await Customer.findById(payload.customerId).select("organizationId").lean();
+    if (cust?.organizationId) {
+      requestedOrganizationId = String(cust.organizationId);
+    }
+  }
+  if (!requestedOrganizationId) {
+    const session = await getServerSession(authOptions);
+    if (session?.user?.id === "admin") {
+      const defaultOrg = await Organization.findOne({ status: "active" }).select("_id").lean();
+      if (defaultOrg) {
+        requestedOrganizationId = String(defaultOrg._id);
+      }
+    }
+  }
+
+  const scope = await getSalesScope(requestedOrganizationId);
+  if ("error" in scope) return scope.error;
+
+  const doc = await SalesDocument.findOne({
+    _id: documentId,
+    organizationId: scope.organizationId,
+  });
+  if (!doc) return respondError("Sales document not found.", 404);
+
+  if (typeof payload.customerId === "string") doc.customerId = payload.customerId as unknown as Types.ObjectId;
+  if (typeof payload.number === "string") doc.number = payload.number;
+  if (payload.referenceNumber !== undefined) doc.referenceNumber = String(payload.referenceNumber);
+  if (payload.issueDate) doc.issueDate = new Date(String(payload.issueDate));
+  if (payload.expiryDate) doc.expiryDate = new Date(String(payload.expiryDate));
+  if (payload.subject !== undefined) doc.subject = String(payload.subject);
+  if (payload.customerNotes !== undefined) doc.customerNotes = String(payload.customerNotes);
+  if (payload.termsAndConditions !== undefined) doc.termsAndConditions = String(payload.termsAndConditions);
+  if (payload.subTotal !== undefined) doc.subTotal = Number(payload.subTotal);
+  if (payload.discount !== undefined) doc.discount = Number(payload.discount);
+  if (payload.discountType) doc.discountType = payload.discountType as "percent" | "amount";
+  if (payload.taxType) doc.taxType = payload.taxType as "TDS" | "TCS" | "GST";
+  if (payload.taxName !== undefined) doc.taxName = String(payload.taxName);
+  if (payload.taxRate !== undefined) doc.taxRate = Number(payload.taxRate);
+  if (payload.taxAmount !== undefined) doc.taxAmount = Number(payload.taxAmount);
+
+  const docRecord = doc as unknown as Record<string, unknown>;
+  if (payload.tdsTcsType !== undefined) docRecord.tdsTcsType = payload.tdsTcsType;
+  if (payload.tdsTcsName !== undefined) docRecord.tdsTcsName = payload.tdsTcsName;
+  if (payload.tdsTcsRate !== undefined) docRecord.tdsTcsRate = payload.tdsTcsRate;
+  if (payload.tdsTcsAmount !== undefined) docRecord.tdsTcsAmount = payload.tdsTcsAmount;
+  if (payload.adjustment !== undefined) doc.adjustment = Number(payload.adjustment);
+  if (payload.total !== undefined) doc.total = Number(payload.total);
+  if (typeof payload.status === "string") doc.status = payload.status;
+  if (payload.items && Array.isArray(payload.items)) {
+    doc.items = payload.items.map((it: { itemId?: string; name?: string; description?: string; quantity?: number; rate?: number; amount?: number }) => ({
+      itemId: it.itemId && isValidObjectId(it.itemId) ? it.itemId : undefined,
+      name: it.name || "Item",
+      description: it.description || undefined,
+      quantity: Number(it.quantity) || 1,
+      rate: Number(it.rate) || 0,
+      amount: Number(it.amount) || 0,
+    })) as unknown as typeof doc.items;
+  }
+  if (payload.notes !== undefined) doc.notes = String(payload.notes);
+
+  if (
+    doc.type === "Quote" &&
+    (payload.subTotal !== undefined ||
+      payload.tdsTcsRate !== undefined ||
+      payload.taxRate !== undefined ||
+      payload.tdsTcsType !== undefined)
+  ) {
+    const verified = calculateQuoteTotals({
+      subTotal: payload.subTotal !== undefined ? Number(payload.subTotal) || 0 : Number(doc.subTotal) || 0,
+      discountAmount: payload.discount !== undefined ? Number(payload.discount) || 0 : Number(doc.discount) || 0,
+      gstRate: payload.taxRate !== undefined ? Number(payload.taxRate) || 0 : Number(doc.taxRate) || 0,
+      tdsTcsType: (payload.tdsTcsType !== undefined ? payload.tdsTcsType : docRecord.tdsTcsType) as "TDS" | "TCS" | "None",
+      tdsTcsRate: payload.tdsTcsRate !== undefined ? Number(payload.tdsTcsRate) || 0 : Number(docRecord.tdsTcsRate) || 0,
+      adjustmentValue: payload.adjustment !== undefined ? Number(payload.adjustment) || 0 : Number(doc.adjustment) || 0,
+    });
+    doc.taxAmount = verified.gstAmount;
+    docRecord.tdsTcsAmount = verified.tdsTcsAmount;
+    doc.total = verified.total;
+  }
+
+  try {
+    await doc.save();
+    return NextResponse.json({ ok: true, id: String(doc._id), number: doc.number });
+  } catch (err: unknown) {
+    const mongoErr = typeof err === "object" && err !== null && "code" in err ? (err as { code: number }) : null;
+    if (mongoErr?.code === 11000) {
+      return respondError(`A sales document with number "${doc.number}" already exists.`, 409);
+    }
+    throw err;
+  }
+}
+
+export async function PUT(request: Request) {
+  try {
+    return await putSales(request);
+  } catch (error) {
+    if (isDatabaseConnectionError(error)) return databaseUnavailable(error);
+    throw error;
+  }
+}
+

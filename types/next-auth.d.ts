@@ -6,13 +6,22 @@ declare module "next-auth" {
       id: string;
       role: string;
       organizationId?: string;
+      tenantId?: string;
+      permissions?: string[];
+      authzVersion?: number;
+      authVersion?: number;
+      mustChangePassword?: boolean;
     } & DefaultSession["user"];
   }
 
   interface User {
     role: string;
     organizationId?: string;
+    tenantId?: string;
+    permissions?: string[];
+    authzVersion?: number;
     authVersion?: number;
+    mustChangePassword?: boolean;
   }
 }
 
@@ -21,6 +30,11 @@ declare module "next-auth/jwt" {
     id?: string;
     role?: string;
     organizationId?: string;
+    tenantId?: string;
+    permissions?: string[];
+    authzVersion?: number;
     authVersion?: number;
+    mustChangePassword?: boolean;
   }
+  
 }

@@ -14,6 +14,8 @@ export default function AdminOrganizationsPage() {
 
 async function AdminOrganizationsContent() {
   const session = await getServerSession(authOptions);
-  if (session?.user?.id !== "admin") redirect("/");
+  if (!session?.user || (session.user.id !== "admin" && session.user.role !== "Super Admin")) {
+    redirect("/");
+  }
   return <AdminOrganizations />;
 }

@@ -15,7 +15,8 @@ describe("bank account protection", () => {
   it("rejects tampered encrypted values", () => {
     vi.stubEnv("BANK_DETAILS_ENCRYPTION_KEY", Buffer.alloc(32, 8).toString("base64"));
     const encrypted = encryptBankAccountNumber("123456789012");
-    expect(() => decryptBankAccountNumber(`${encrypted.slice(0, -1)}A`)).toThrow();
+    const tampered = encrypted.endsWith("A") ? `${encrypted.slice(0, -1)}B` : `${encrypted.slice(0, -1)}A`;
+    expect(() => decryptBankAccountNumber(tampered)).toThrow();
   });
 
   it("refuses to store bank details without a valid encryption key", () => {

@@ -1,8 +1,21 @@
 "use client";
 
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check } from "lucide-react";
+import {
+  ArrowLeft,
+  Building2,
+  Globe,
+  Mail,
+  Phone,
+  Save,
+  ShieldCheck,
+  Smartphone,
+  UserCheck,
+} from "lucide-react";
+import { CustomerClassificationCards } from "./customer/customer-classification-cards";
+import { CustomerFormTabs, type FormTab } from "./customer/customer-form-tabs";
+import { FormRow } from "./customer/form-row";
 
 type Organization = { id: string; name: string };
 type SalesResponse = {
@@ -11,11 +24,8 @@ type SalesResponse = {
   error?: string;
 };
 
-const tabs = ["Other Details", "Address", "Contact Persons", "Custom Fields", "Reporting Tags", "Remarks"] as const;
-type FormTab = (typeof tabs)[number];
-
-const inputClass = "h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
-const labelClass = "text-xs font-medium text-slate-700";
+const inputClass =
+  "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-800 outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
 
 export function NewCustomerForm() {
   const router = useRouter();
@@ -27,6 +37,29 @@ export function NewCustomerForm() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [sameAsCompanyName, setSameAsCompanyName] = useState(false);
+
+  const handleSameAsCompanyChange = (checked: boolean) => {
+    setSameAsCompanyName(checked);
+    if (checked && companyName.trim().length > 0) {
+      setDisplayName(companyName);
+    }
+  };
+
+  const handleCompanyNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextVal = e.target.value;
+    setCompanyName(nextVal);
+    if (sameAsCompanyName && nextVal.trim().length > 0) {
+      setDisplayName(nextVal);
+    }
+  };
+
+  const handleDisplayNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (sameAsCompanyName) return;
+    setDisplayName(e.target.value);
+  };
 
   useEffect(() => {
     let active = true;
@@ -39,8 +72,8 @@ export function NewCustomerForm() {
         setIsAdmin(data.isAdmin);
         if (data.isAdmin) {
           const requestedId = new URLSearchParams(window.location.search).get("organizationId");
-          const selectedOrganization = data.organizations.find((item) => item.id === requestedId)
-            ?? data.organizations[0];
+          const selectedOrganization =
+            data.organizations.find((item) => item.id === requestedId) ?? data.organizations[0];
           setOrganizationId(selectedOrganization?.id ?? "");
         } else {
           setOrganizationId(data.organizations[0]?.id ?? "");
@@ -52,7 +85,9 @@ export function NewCustomerForm() {
       .finally(() => {
         if (active) setLoading(false);
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -67,7 +102,11 @@ export function NewCustomerForm() {
     const contactMobile = text("contactMobile");
     const customLabel = text("customFieldLabel");
     const customValue = text("customFieldValue");
-    const tags = text("reportingTags").split(",").map((value) => value.trim()).filter(Boolean);
+    const tags = text("reportingTags")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
     const payload = {
       type: "Customer",
       name: text("displayName"),
@@ -104,9 +143,10 @@ export function NewCustomerForm() {
         postalCode: text("shippingPostalCode"),
         country: text("shippingCountry"),
       },
-      contactPersons: contactPerson || contactEmail || contactPhone || contactMobile
-        ? [{ name: contactPerson, email: contactEmail, phone: contactPhone, mobile: contactMobile }]
-        : [],
+      contactPersons:
+        contactPerson || contactEmail || contactPhone || contactMobile
+          ? [{ name: contactPerson, email: contactEmail, phone: contactPhone, mobile: contactMobile }]
+          : [],
       customFields: customLabel || customValue ? [{ label: customLabel, value: customValue }] : [],
       reportingTags: tags,
       remarks: text("remarks"),
@@ -130,230 +170,286 @@ export function NewCustomerForm() {
   }
 
   return (
-    <main className="min-h-[calc(100vh-7rem)] bg-white">
-      <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 sm:px-8">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => router.push("/sales/customers")}
-            aria-label="Back to customers"
-            className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <h1 className="text-xl font-semibold text-slate-900">New Customer</h1>
-        </div>
-        {isAdmin && (
-          <label className="flex items-center gap-2 text-xs text-slate-600">
-            Organization
-            <select
-              aria-label="Select organization"
-              value={organizationId}
-              onChange={(event) => setOrganizationId(event.target.value)}
-              className="max-w-56 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-              required
-            >
-              <option value="">Select organization</option>
-              {organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
-            </select>
-          </label>
-        )}
-      </div>
-
-      <form onSubmit={handleSubmit} className="max-w-5xl px-5 pb-8 pt-4 sm:px-8">
-        <div className="mb-5 flex items-center gap-2 bg-blue-50 px-3 py-2.5 text-xs text-blue-900">
-          <Check className="h-4 w-4 shrink-0 text-blue-700" />
-          Add the customer&apos;s GSTIN and address details to keep sales documents accurate.
-        </div>
-
-        {isAdmin && organizations.length === 0 && !loading && (
-          <p role="alert" className="mb-4 rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
-            No organizations are available. Create an organization before adding customers.
-          </p>
-        )}
-        {error && <p role="alert" className="mb-4 rounded-md bg-rose-50 px-3 py-2.5 text-sm text-rose-700">{error}</p>}
-
-        <div className="space-y-3">
-          <FormRow label="Customer Type">
-            <div className="flex h-9 items-center gap-5 text-xs text-slate-800">
-              {(["Business", "Individual"] as const).map((value) => (
-                <label key={value} className="inline-flex items-center gap-2">
-                  <input
-                    type="radio"
-                    name="customerType"
-                    value={value}
-                    checked={customerType === value}
-                    onChange={() => setCustomerType(value)}
-                    className="accent-blue-600"
-                  />
-                  {value}
-                </label>
-              ))}
-            </div>
-          </FormRow>
-          <FormRow label="Primary Contact">
-            <div className="grid grid-cols-[92px_1fr_1fr] gap-2">
-              <select name="salutation" aria-label="Salutation" className={inputClass}>
-                <option value="">Salutation</option><option>Mr.</option><option>Ms.</option><option>Mrs.</option><option>Dr.</option>
-              </select>
-              <input name="firstName" aria-label="First name" placeholder="First Name" className={inputClass} />
-              <input name="lastName" aria-label="Last name" placeholder="Last Name" className={inputClass} />
-            </div>
-          </FormRow>
-          {customerType === "Business" && (
-            <FormRow label="Company Name" htmlFor="companyName">
-              <input id="companyName" name="companyName" className={inputClass} maxLength={160} />
-            </FormRow>
-          )}
-          <FormRow label="Display Name" required htmlFor="displayName">
-            <input id="displayName" name="displayName" aria-label="Display Name" className={inputClass} required minLength={2} maxLength={120} placeholder="Customer name shown on transactions" />
-          </FormRow>
-          <FormRow label="Email Address" htmlFor="email">
-            <input id="email" name="email" type="email" className={inputClass} />
-          </FormRow>
-          <FormRow label="Phone">
-            <div className="grid grid-cols-2 gap-2">
-              <input name="workPhone" type="tel" className={inputClass} maxLength={30} placeholder="Work Phone" />
-              <input name="mobile" type="tel" className={inputClass} maxLength={30} placeholder="Mobile" />
-            </div>
-          </FormRow>
-          <FormRow label="Customer Language" htmlFor="customerLanguage">
-            <select id="customerLanguage" name="customerLanguage" className={inputClass} defaultValue="English">
-              {["English", "Hindi", "Gujarati", "Marathi", "Punjabi", "Tamil", "Telugu", "Kannada", "Bengali"].map((language) => <option key={language}>{language}</option>)}
-            </select>
-          </FormRow>
-        </div>
-
-        <div className="mt-7 border-b border-slate-200">
-          <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Customer details">
-            {tabs.map((item) => (
+    <div className="min-h-[calc(100vh-7rem)] bg-slate-50/50 pb-20">
+      {/* Top Header */}
+      <div className="border-b border-slate-200/80 bg-white">
+        <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
               <button
-                key={item}
                 type="button"
-                role="tab"
-                aria-selected={tab === item}
-                onClick={() => setTab(item)}
-                className={`whitespace-nowrap border-b-2 px-2.5 py-2 text-xs font-medium ${
-                  tab === item ? "border-blue-600 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800"
-                }`}
+                onClick={() => router.push("/sales/customers")}
+                aria-label="Back to customers"
+                className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-2xs transition hover:bg-slate-50 hover:text-slate-800"
               >
-                {item}
+                <ArrowLeft className="h-4 w-4" />
               </button>
-            ))}
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-blue-600">Customers</span>
+                  <span className="text-xs text-slate-400">/</span>
+                  <span className="text-xs text-slate-500">Create New</span>
+                </div>
+                <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">New Customer Profile</h1>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              {isAdmin && (
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                    <Building2 className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <select
+                    aria-label="Select organization"
+                    value={organizationId}
+                    onChange={(event) => setOrganizationId(event.target.value)}
+                    className="h-10 rounded-xl border border-slate-300 bg-white pl-9 pr-8 text-xs font-medium text-slate-700 shadow-2xs transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    required
+                  >
+                    <option value="">Select organization</option>
+                    {organizations.map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {organization.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => router.push("/sales/customers")}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
+      </div>
 
-        <section role="tabpanel" hidden={tab !== "Other Details"} className="space-y-3 pt-4">
-          <FormRow label="GSTIN" htmlFor="gstin">
-            <input id="gstin" name="gstin" className={inputClass} maxLength={20} />
-          </FormRow>
-          <FormRow label="PAN" htmlFor="pan">
-            <input id="pan" name="pan" className={inputClass} maxLength={10} />
-          </FormRow>
-          <FormRow label="Currency" htmlFor="currency">
-            <select id="currency" name="currency" className={inputClass} defaultValue="INR">
-              <option value="INR">INR - Indian Rupee</option>
-              <option value="USD">USD - US Dollar</option>
-              <option value="EUR">EUR - Euro</option>
-              <option value="GBP">GBP - British Pound</option>
-            </select>
-          </FormRow>
-          <FormRow label="Opening Balance" htmlFor="openingBalance">
-            <div className="flex">
-              <span className="flex h-9 items-center rounded-l-md border border-r-0 border-slate-300 bg-slate-50 px-3 text-xs text-slate-600">INR</span>
-              <input id="openingBalance" name="openingBalance" type="number" min="0" step="0.01" defaultValue="0" className={`${inputClass} rounded-l-none`} />
+      {/* Main Form Body */}
+      <main className="mx-auto max-w-5xl px-4 pt-6 sm:px-6">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="flex items-start gap-3 rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50/80 to-indigo-50/50 p-4 text-xs text-blue-900 shadow-xs">
+            <ShieldCheck className="h-5 w-5 shrink-0 text-blue-600 mt-0.5" />
+            <div>
+              <p className="font-semibold text-blue-950">GST Compliance & Commercial Records</p>
+              <p className="mt-0.5 text-blue-800/90 leading-relaxed">
+                Add accurate customer GSTIN, PAN, and billing address to ensure automated GST calculation on invoices and quotes.
+              </p>
             </div>
-          </FormRow>
-          <FormRow label="Payment Terms" htmlFor="paymentTerms">
-            <select id="paymentTerms" name="paymentTerms" className={inputClass} defaultValue="Due on Receipt">
-              {["Due on Receipt", "Net 15", "Net 30", "Net 45", "Net 60"].map((term) => <option key={term}>{term}</option>)}
-            </select>
-          </FormRow>
-          <FormRow label="Portal Access">
-            <p className="py-2 text-xs text-slate-500">Customer portal access is not configured for this workspace.</p>
-          </FormRow>
-        </section>
+          </div>
 
-        <section role="tabpanel" hidden={tab !== "Address"} className="space-y-3 pt-4">
-          <h2 className="mb-2 text-sm font-semibold text-slate-800">Billing Address</h2>
-          <FormRow label="Attention" htmlFor="billingAttention"><input id="billingAttention" name="billingAttention" className={inputClass} /></FormRow>
-          <FormRow label="Street" htmlFor="billingStreet"><textarea id="billingStreet" name="billingStreet" className={`${inputClass} h-16 py-2`} /></FormRow>
-          <FormRow label="City" htmlFor="billingCity"><input id="billingCity" name="billingCity" className={inputClass} /></FormRow>
-          <FormRow label="State" htmlFor="billingState"><input id="billingState" name="billingState" className={inputClass} /></FormRow>
-          <FormRow label="Postal Code" htmlFor="billingPostalCode"><input id="billingPostalCode" name="billingPostalCode" className={inputClass} /></FormRow>
-          <FormRow label="Country" htmlFor="billingCountry"><input id="billingCountry" name="billingCountry" className={inputClass} defaultValue="India" /></FormRow>
-          <details className="pt-3">
-            <summary className="cursor-pointer text-sm font-medium text-blue-700">Add shipping address</summary>
-            <div className="mt-4 space-y-3">
-              <FormRow label="Attention" htmlFor="shippingAttention"><input id="shippingAttention" name="shippingAttention" className={inputClass} /></FormRow>
-              <FormRow label="Street" htmlFor="shippingStreet"><textarea id="shippingStreet" name="shippingStreet" className={`${inputClass} h-16 py-2`} /></FormRow>
-              <FormRow label="City" htmlFor="shippingCity"><input id="shippingCity" name="shippingCity" className={inputClass} /></FormRow>
-              <FormRow label="State" htmlFor="shippingState"><input id="shippingState" name="shippingState" className={inputClass} /></FormRow>
-              <FormRow label="Postal Code" htmlFor="shippingPostalCode"><input id="shippingPostalCode" name="shippingPostalCode" className={inputClass} /></FormRow>
-              <FormRow label="Country" htmlFor="shippingCountry"><input id="shippingCountry" name="shippingCountry" className={inputClass} /></FormRow>
+          {isAdmin && organizations.length === 0 && !loading && (
+            <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-xs font-medium text-amber-800 shadow-xs">
+              No organizations are available. Create an organization before adding customers.
             </div>
-          </details>
-        </section>
+          )}
 
-        <section role="tabpanel" hidden={tab !== "Contact Persons"} className="space-y-3 pt-4">
-          <p className="mb-3 text-xs text-slate-500">The primary contact details entered above will be saved with this customer.</p>
-          <FormRow label="Contact Email" htmlFor="contactEmail"><input id="contactEmail" name="contactEmail" type="email" className={inputClass} /></FormRow>
-          <FormRow label="Work Phone" htmlFor="contactPhone"><input id="contactPhone" name="contactPhone" type="tel" className={inputClass} /></FormRow>
-          <FormRow label="Mobile" htmlFor="contactMobile"><input id="contactMobile" name="contactMobile" type="tel" className={inputClass} /></FormRow>
-        </section>
+          {error && (
+            <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50/90 p-4 text-xs font-medium text-rose-800 shadow-xs">
+              {error}
+            </div>
+          )}
 
-        <section role="tabpanel" hidden={tab !== "Custom Fields"} className="space-y-3 pt-4">
-          <p className="mb-3 text-xs text-slate-500">Add one optional custom field for this customer.</p>
-          <FormRow label="Field Name" htmlFor="customFieldLabel"><input id="customFieldLabel" name="customFieldLabel" className={inputClass} maxLength={80} /></FormRow>
-          <FormRow label="Value" htmlFor="customFieldValue"><input id="customFieldValue" name="customFieldValue" className={inputClass} maxLength={250} /></FormRow>
-        </section>
+          <CustomerClassificationCards
+            customerType={customerType}
+            onSelectType={(type) => {
+              setCustomerType(type);
+              if (type === "Individual") {
+                setSameAsCompanyName(false);
+              }
+            }}
+          />
 
-        <section role="tabpanel" hidden={tab !== "Reporting Tags"} className="space-y-3 pt-4">
-          <FormRow label="Reporting Tags" htmlFor="reportingTags">
-            <input id="reportingTags" name="reportingTags" className={inputClass} placeholder="Separate tags with commas" />
-          </FormRow>
-          <p className="text-xs text-slate-500">Tags can be used to group customers in reports.</p>
-        </section>
+          {/* Primary Profile Details Card */}
+          <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs">
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+              <UserCheck className="h-4 w-4 text-blue-600" />
+              <h2 className="text-sm font-bold text-slate-900">Primary Contact & Identity</h2>
+            </div>
 
-        <section role="tabpanel" hidden={tab !== "Remarks"} className="space-y-3 pt-4">
-          <FormRow label="Remarks" htmlFor="remarks"><textarea id="remarks" name="remarks" className={`${inputClass} h-28 py-2`} maxLength={2000} /></FormRow>
-        </section>
+            <div className="mt-4 space-y-4">
+              <FormRow label="Primary Contact">
+                <div className="grid grid-cols-[100px_1fr_1fr] gap-2.5">
+                  <select name="salutation" aria-label="Salutation" className={inputClass}>
+                    <option value="">Salutation</option>
+                    <option>Mr.</option>
+                    <option>Ms.</option>
+                    <option>Mrs.</option>
+                    <option>Dr.</option>
+                  </select>
+                  <input
+                    name="firstName"
+                    aria-label="First name"
+                    placeholder="First Name"
+                    className={inputClass}
+                  />
+                  <input
+                    name="lastName"
+                    aria-label="Last name"
+                    placeholder="Last Name"
+                    className={inputClass}
+                  />
+                </div>
+              </FormRow>
 
-        <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex gap-2">
-            <button type="button" onClick={() => router.push("/sales/customers")} className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              {customerType === "Business" && (
+                <FormRow label="Company Name" htmlFor="companyName">
+                  <div className="relative">
+                    <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      id="companyName"
+                      name="companyName"
+                      value={companyName}
+                      onChange={handleCompanyNameChange}
+                      placeholder="e.g. Reliance Industries Ltd"
+                      className={`${inputClass} pl-9`}
+                      maxLength={160}
+                    />
+                  </div>
+                </FormRow>
+              )}
+
+              <FormRow label="Display Name" required htmlFor="displayName">
+                <div className="space-y-1.5">
+                  <input
+                    id="displayName"
+                    name="displayName"
+                    aria-label="Display Name"
+                    value={displayName}
+                    onChange={handleDisplayNameChange}
+                    readOnly={sameAsCompanyName}
+                    className={`${inputClass} ${
+                      sameAsCompanyName ? "bg-slate-50 text-slate-600 cursor-not-allowed" : ""
+                    }`}
+                    required
+                    minLength={2}
+                    maxLength={120}
+                    placeholder="Customer name shown on invoices, quotes, and ledger"
+                  />
+                  {customerType === "Business" && (
+                    <label
+                      htmlFor="sameAsCompanyName"
+                      className="flex items-center gap-2 cursor-pointer select-none pt-0.5"
+                    >
+                      <input
+                        type="checkbox"
+                        id="sameAsCompanyName"
+                        name="sameAsCompanyName"
+                        checked={sameAsCompanyName}
+                        onChange={(e) => handleSameAsCompanyChange(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                      <span className="text-xs font-medium text-slate-700">
+                        Display Name same as Company Name
+                      </span>
+                    </label>
+                  )}
+                  <p className="text-[11px] text-slate-400">
+                    This name will be printed on all sales transactions and client vouchers.
+                  </p>
+                </div>
+              </FormRow>
+
+              <FormRow label="Email Address" htmlFor="email">
+                <div className="relative">
+                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    placeholder="billing@customer.com"
+                    className={`${inputClass} pl-9`}
+                  />
+                </div>
+              </FormRow>
+
+              <FormRow label="Phone Numbers">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="relative">
+                    <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      name="workPhone"
+                      type="tel"
+                      className={`${inputClass} pl-9`}
+                      maxLength={30}
+                      placeholder="Work Phone (e.g. 022 2847 1234)"
+                    />
+                  </div>
+                  <div className="relative">
+                    <Smartphone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      name="mobile"
+                      type="tel"
+                      className={`${inputClass} pl-9`}
+                      maxLength={30}
+                      placeholder="Mobile Phone (e.g. +91 98765 43210)"
+                    />
+                  </div>
+                </div>
+              </FormRow>
+
+              <FormRow label="Customer Language" htmlFor="customerLanguage">
+                <div className="relative">
+                  <Globe className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <select
+                    id="customerLanguage"
+                    name="customerLanguage"
+                    className={`${inputClass} pl-9`}
+                    defaultValue="English"
+                  >
+                    {[
+                      "English",
+                      "Hindi",
+                      "Gujarati",
+                      "Marathi",
+                      "Punjabi",
+                      "Tamil",
+                      "Telugu",
+                      "Kannada",
+                      "Bengali",
+                    ].map((language) => (
+                      <option key={language}>{language}</option>
+                    ))}
+                  </select>
+                </div>
+              </FormRow>
+            </div>
+          </div>
+
+          <CustomerFormTabs
+            tab={tab}
+            onTabChange={(t) => setTab(t)}
+            organizationId={organizationId}
+          />
+
+          {/* Form Actions Footer */}
+          <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-200/80 pt-4">
+            <button
+              type="button"
+              onClick={() => router.push("/sales/customers")}
+              className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-xs font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50"
+            >
               Cancel
             </button>
+
             <button
               type="submit"
               disabled={saving || loading || (isAdmin && !organizationId)}
-              className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {saving ? "Saving…" : "Save Customer"}
+              <Save className="h-4 w-4" />
+              <span>{saving ? "Saving Customer…" : "Save Customer"}</span>
             </button>
           </div>
-        </div>
-        <p className="mt-7 text-xs text-slate-500">
-          <span className="font-semibold">Customer Owner:</span> Customer ownership is not configured for this workspace.
-        </p>
-      </form>
-    </main>
-  );
-}
 
-function FormRow({ label, required, htmlFor, children }: { label: string; required?: boolean; htmlFor?: string; children: ReactNode }) {
-  return (
-    <div className="grid gap-1.5 sm:grid-cols-[140px_minmax(0,1fr)] sm:items-center sm:gap-3">
-      {htmlFor ? (
-        <label htmlFor={htmlFor} className={labelClass}>
-          {label}{required && <span className="ml-1 text-rose-600">*</span>}
-        </label>
-      ) : (
-        <div className={labelClass} role="group" aria-label={label}>
-          {label}{required && <span className="ml-1 text-rose-600">*</span>}
-        </div>
-      )}
-      <div className="max-w-md">{children}</div>
+          <p className="text-[11px] text-slate-400 text-center">
+            FinanceOS · LedgerFlow Enterprise CRM · Customer profile saved securely under organization scope.
+          </p>
+        </form>
+      </main>
     </div>
   );
 }
