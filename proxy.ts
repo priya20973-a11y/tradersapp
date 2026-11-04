@@ -16,7 +16,7 @@ import { getToken } from "next-auth/jwt";
 import { NextResponse, type NextRequest } from "next/server";
 
 /** Routes that do not require authentication. */
-const PUBLIC_PATHS = new Set(["/signin", "/signup", "/admin/login", "/api/health"]);
+const PUBLIC_PATHS = new Set(["/signin", "/signup", "/admin/login", "/api/health", "/api/signup"]);
 
 /** Route prefixes that require Super Admin role. */
 const ADMIN_ONLY_PREFIXES = ["/admin/organizations", "/api/admin"];

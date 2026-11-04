@@ -188,6 +188,22 @@ describe("Security Audits & Hardening Verification", () => {
   });
 
   describe("3. Content Security Policy & Nonce Generation", () => {
+    it("allows unauthenticated account creation requests through the proxy", async () => {
+      process.env.NEXTAUTH_SECRET = "test_secret_that_is_at_least_32_characters_long_123456";
+      const request = new NextRequest("http://localhost:3000/api/signup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      const response = await proxy(request);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("x-middleware-request-x-nonce")).toBe(response.headers.get("x-nonce"));
+      expect(response.headers.get("Content-Security-Policy")).toContain("'strict-dynamic'");
+    });
+
     it("generates a cryptographic nonce and sets CSP header on proxy responses", async () => {
       process.env.NEXTAUTH_SECRET = "test_secret_that_is_at_least_32_characters_long_123456";
       const request = new NextRequest("http://localhost:3000/api/health");
