@@ -1,8 +1,6 @@
 import { AuthForm } from "@/components/auth/auth-form";
 import { connection } from "next/server";
 
-export const instant = false;
-
 export default async function AdminLoginPage() {
   await connection();
 
