@@ -76,13 +76,18 @@ function escapeRegex(text: string): string {
 }
 
 export async function POST(request: Request) {
+  const requestId = randomUUID();
+  let signupStage = "request-start";
+
   try {
     // 1. Explicit kill-switch: check if public signup is disabled
+    signupStage = "signup-disabled-check";
     if (process.env.DISABLE_PUBLIC_SIGNUP === "true") {
       throw new ForbiddenError("Public signup is currently disabled. Contact your administrator.");
     }
 
     // 2. IP-based rate limiting via reliable shared store
+    signupStage = "ip-rate-limit";
     const clientIp = getClientIp(request);
     const ipRateLimit = await checkRateLimit({
       key: `signup:ip:${clientIp}`,
@@ -108,6 +113,7 @@ export async function POST(request: Request) {
     }
 
     // 3. Payload parsing & validation
+    signupStage = "payload-parse";
     let payload: unknown;
     try {
       payload = await request.json();
@@ -136,6 +142,7 @@ export async function POST(request: Request) {
     } = validation.data;
 
     // 4. Email-based rate limiting (prevents targeted flooding on a single address)
+    signupStage = "email-rate-limit";
     const emailRateLimit = await checkRateLimit({
       key: `signup:email:${email}`,
       limit: 3,
@@ -164,14 +171,17 @@ export async function POST(request: Request) {
       throw new ConflictError("That email address cannot be registered as an organization user.");
     }
 
+    signupStage = "database-connect";
     await connectToDatabase();
 
     // 5. Pre-check outside transaction
+    signupStage = "existing-user-check";
     const existingUser = await User.exists({ email });
     if (existingUser) {
       throw new ConflictError("An account with this email already exists.");
     }
 
+    signupStage = "password-hash";
     const passwordHash = await bcrypt.hash(password, 12);
 
     const cleanAadhaar = aadhaar ? sanitizeAadhaar(aadhaar) : "";
@@ -192,14 +202,13 @@ export async function POST(request: Request) {
         : undefined;
 
     // 6. Atomic multi-document transaction: prevents duplicate organization/user creation & guarantees tenant isolation
+    signupStage = "registration-transaction";
     await withTransaction(async (session) => {
-      // Check inside transaction to prevent concurrent race duplicates
-      const [existingUserInTx, existingOrgInTx] = await Promise.all([
-        User.findOne({ email }).session(session),
-        Organization.findOne({
-          name: { $regex: new RegExp(`^${escapeRegex(organizationName)}$`, "i") },
-        }).session(session),
-      ]);
+      // MongoDB sessions do not support parallel operations within a transaction.
+      const existingUserInTx = await User.findOne({ email }).session(session);
+      const existingOrgInTx = await Organization.findOne({
+        name: { $regex: new RegExp(`^${escapeRegex(organizationName)}$`, "i") },
+      }).session(session);
 
       if (existingUserInTx) {
         throw new ConflictError("An account with this email already exists.");
@@ -251,9 +260,15 @@ export async function POST(request: Request) {
       );
     });
 
-    logger.info({ email, organizationName }, "Public signup created pending organization and owner user");
+    signupStage = "signup-complete";
+    logger.info({ requestId }, "Public signup created pending organization and owner user");
     return createdResponse({ pendingApproval: true });
   } catch (error) {
-    return handleRouteError(error, "signup");
+    const response = handleRouteError(error, requestId);
+    if (response.status >= 500) {
+      logger.error({ requestId, signupStage }, "Public signup failed at stage");
+    }
+    response.headers.set("x-request-id", requestId);
+    return response;
   }
 }

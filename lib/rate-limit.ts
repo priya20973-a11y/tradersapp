@@ -107,7 +107,7 @@ export async function checkRateLimit({
       },
       {
         upsert: true,
-        new: true,
+        returnDocument: "after",
       },
     );
 

@@ -16,8 +16,6 @@ const ItemPreferenceSchema = new Schema(
   { timestamps: true },
 );
 
-ItemPreferenceSchema.index({ organizationId: 1 });
-
 export const ItemPreference =
   (mongoose.models.ItemPreference as Model<ItemPreferenceRecord>) ||
   mongoose.model<ItemPreferenceRecord>("ItemPreference", ItemPreferenceSchema);

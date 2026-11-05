@@ -227,7 +227,13 @@ export function AuthForm(props: AuthFormProps) {
         });
         const result = (await response.json()) as { error?: string; pendingApproval?: boolean };
         if (!response.ok) {
-          setError(result.error ?? "Unable to create your account.");
+          const errorMessage = result.error ?? "Unable to create your account.";
+          const requestId = response.headers.get("x-request-id");
+          setError(
+            response.status >= 500 && requestId
+              ? `${errorMessage} Reference ID: ${requestId}`
+              : errorMessage,
+          );
           return;
         }
         setSuccess(
