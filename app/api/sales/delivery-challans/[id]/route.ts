@@ -3,12 +3,7 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import {
-  Customer,
-  Organization,
-  SalesDocument,
-  type CustomerRecord,
-} from "@/models";
+import { Customer, Organization, SalesDocument } from "@/models";
 
 interface ChallanItemInput {
   itemId?: string | Types.ObjectId;
@@ -26,22 +21,6 @@ interface ChallanAttachmentInput {
   type?: string;
   data?: string;
   url?: string;
-}
-
-interface DeliveryChallanPayload {
-  customerId?: string;
-  items?: ChallanItemInput[];
-  attachments?: ChallanAttachmentInput[];
-  discount?: number;
-  discountType?: "percent" | "amount";
-  adjustment?: number;
-  deliveryChallanDate?: string | number;
-  deliveryChallanNumber?: string;
-  challanType?: string;
-  referenceNumber?: string;
-  status?: string;
-  customerNotes?: string;
-  termsAndConditions?: string;
 }
 
 export async function GET(
@@ -78,9 +57,9 @@ export async function GET(
       return NextResponse.json({ error: "Delivery Challan not found" }, { status: 404 });
     }
 
-    let customerDoc: CustomerRecord | null = null;
+    let customerDoc: Record<string, unknown> | null = null;
     if (doc.customerId) {
-      customerDoc = await Customer.findById(doc.customerId).lean();
+      customerDoc = (await Customer.findById(doc.customerId).lean()) as Record<string, unknown> | null;
     }
 
     const challan = {
@@ -105,7 +84,7 @@ export async function GET(
       adjustment: Number(doc.adjustment || 0),
       customerNotes: doc.customerNotes || "",
       termsAndConditions: doc.termsAndConditions || "",
-      items: (doc.items || []).map((item) => ({
+      items: ((doc.items || []) as ChallanItemInput[]).map((item) => ({
         itemId: item.itemId ? String(item.itemId) : undefined,
         name: item.name,
         description: item.description || "",
@@ -114,7 +93,7 @@ export async function GET(
         rate: Number(item.rate || 0),
         amount: Number(item.amount || 0),
       })),
-      attachments: (doc.attachments || []).map((att) => ({
+      attachments: ((doc.attachments || []) as ChallanAttachmentInput[]).map((att) => ({
         name: att.name,
         size: att.size,
         type: att.type,
@@ -158,7 +137,7 @@ export async function PUT(
     }
 
     const orgObjId = new Types.ObjectId(orgId);
-    const body: DeliveryChallanPayload = await request.json().catch(() => ({}));
+    const body = await request.json().catch(() => ({}));
 
     const existing = await SalesDocument.findOne({
       _id: new Types.ObjectId(id),
@@ -171,30 +150,28 @@ export async function PUT(
     }
 
     let customerObjId = existing.customerId;
-    let customerDoc: CustomerRecord | null = null;
+    let customerDoc: Record<string, unknown> | null = null;
 
     if (body.customerId && isValidObjectId(body.customerId)) {
       customerObjId = new Types.ObjectId(body.customerId);
-      customerDoc = await Customer.findOne({ _id: customerObjId, organizationId: orgObjId }).lean();
+      customerDoc = (await Customer.findOne({ _id: customerObjId, organizationId: orgObjId }).lean()) as Record<string, unknown> | null;
     }
 
     const customerSnapshot = customerDoc
       ? {
-          name: customerDoc.name,
-          companyName: customerDoc.companyName || customerDoc.name,
-          gstin: customerDoc.gstin || "",
-          pan: customerDoc.pan || "",
-          email: customerDoc.email || "",
-          phone: customerDoc.phone || customerDoc.mobile || "",
-          billingAddress: customerDoc.billingAddress || {},
-          shippingAddress: customerDoc.shippingAddress || customerDoc.billingAddress || {},
+          name: String(customerDoc.name ?? ""),
+          companyName: String(customerDoc.companyName ?? customerDoc.name ?? ""),
+          gstin: String(customerDoc.gstin ?? ""),
+          pan: String(customerDoc.pan ?? ""),
+          email: String(customerDoc.email ?? ""),
+          phone: String(customerDoc.phone ?? customerDoc.mobile ?? ""),
+          billingAddress: (customerDoc.billingAddress as Record<string, unknown>) || {},
+          shippingAddress: (customerDoc.shippingAddress as Record<string, unknown>) || (customerDoc.billingAddress as Record<string, unknown>) || {},
         }
       : existing.customerSnapshot;
 
     // Items calculation
-    const rawItems: ChallanItemInput[] = Array.isArray(body.items)
-      ? body.items
-      : existing.items || [];
+    const rawItems = (Array.isArray(body.items) ? body.items : existing.items) as ChallanItemInput[];
     const items = rawItems.map((item) => {
       const name = (item.name || "Item").trim();
       const quantity = Math.max(0, Number(item.quantity) || 1);
@@ -233,7 +210,7 @@ export async function PUT(
     // Attachments
     let attachments = existing.attachments;
     if (Array.isArray(body.attachments)) {
-      attachments = body.attachments.slice(0, 5).map((att) => ({
+      attachments = (body.attachments as ChallanAttachmentInput[]).slice(0, 5).map((att) => ({
         name: String(att.name || "attachment"),
         size: Number(att.size || 0),
         type: String(att.type || ""),
@@ -255,7 +232,7 @@ export async function PUT(
     if (body.referenceNumber !== undefined) existing.referenceNumber = body.referenceNumber.trim();
     if (body.status) existing.status = body.status.trim();
     existing.issueDate = issueDate;
-    existing.items = items;
+    existing.items = items as unknown as typeof existing.items;
     existing.subTotal = Math.round(subTotal * 100) / 100;
     existing.discount = rawDiscount;
     existing.discountType = discountType;
@@ -263,7 +240,7 @@ export async function PUT(
     existing.total = total;
     if (body.customerNotes !== undefined) existing.customerNotes = body.customerNotes.trim();
     if (body.termsAndConditions !== undefined) existing.termsAndConditions = body.termsAndConditions.trim();
-    existing.attachments = attachments;
+    existing.attachments = attachments as unknown as typeof existing.attachments;
 
     await existing.save();
 
@@ -378,3 +355,4 @@ export async function DELETE(
     );
   }
 }
+

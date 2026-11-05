@@ -10,8 +10,8 @@
 
 import { NextResponse } from "next/server";
 import {
-  AppError,
   isDuplicateKeyError,
+  isAppError,
   isTransientTransactionError,
   type ValidationError,
 } from "@/lib/errors";
@@ -94,7 +94,7 @@ export function handleRouteError(
   const ctx = requestId ? { requestId } : {};
 
   // ── Known application errors (operational) ──
-  if (error instanceof AppError) {
+  if (isAppError(error)) {
     if (error.isOperational) {
       logger.warn({ ...ctx, code: error.code, status: error.statusCode }, error.message);
     } else {
@@ -108,6 +108,31 @@ export function handleRouteError(
       error.code,
       validationError.fieldErrors,
     );
+  }
+
+  // ── Mongoose schema validation ──
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "ValidationError" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    const validationErrors =
+      "errors" in error && typeof error.errors === "object" && error.errors !== null
+        ? Object.values(error.errors)
+        : [];
+    const firstFieldError = validationErrors.find(
+      (fieldError): fieldError is { message: string } =>
+        typeof fieldError === "object" &&
+        fieldError !== null &&
+        "message" in fieldError &&
+        typeof fieldError.message === "string",
+    );
+    const message = firstFieldError?.message || error.message;
+    logger.warn({ ...ctx }, "Mongoose schema validation failed");
+    return errorResponse(message, 400, "VALIDATION_ERROR");
   }
 
   // ── MongoDB duplicate key ──
@@ -128,7 +153,7 @@ export function handleRouteError(
 
   // ── MongoDB replica-set / connection errors ──
   if (error instanceof Error) {
-    if (/Transaction numbers are only allowed|transactions are not supported|replica set/i.test(error.message)) {
+    if (/Transaction numbers are only allowed|transactions are not supported|standalone servers do not support transactions|replica set/i.test(error.message)) {
       logger.error({ ...ctx, err: error }, "Replica-set required for transactions");
       return errorResponse(
         "This operation requires MongoDB transactions. Configure MongoDB as a replica set or Atlas cluster.",
@@ -137,7 +162,11 @@ export function handleRouteError(
       );
     }
 
-    if (/MongooseServerSelectionError|buffering timed out|querySrv|ECONNREFUSED|ETIMEDOUT|ENOTFOUND/.test(error.message)) {
+    const errorName = "name" in error ? String(error.name) : "";
+    if (
+      /Mongo(Server|oseServer)SelectionError/.test(errorName) ||
+      /MongooseServerSelectionError|server selection timed out|buffering timed out|querySrv|ECONNREFUSED|ETIMEDOUT|ENOTFOUND/i.test(error.message)
+    ) {
       logger.error({ ...ctx, err: error }, "Database connection error");
       return errorResponse(
         "The database is temporarily unavailable. Please try again.",

@@ -75,15 +75,15 @@ export async function GET(
 
         return {
           id: String(inv._id),
-          invoiceNumber: inv.number,
-          invoiceDate: inv.issueDate ? formatDateOnly(new Date(inv.issueDate)) : "",
-          dueDate: inv.dueDate ? formatDateOnly(new Date(inv.dueDate)) : "",
+          invoiceNumber: String(inv.number ?? ""),
+          invoiceDate: inv.issueDate ? formatDateOnly(new Date(inv.issueDate as string | number | Date)) : "",
+          dueDate: inv.dueDate ? formatDateOnly(new Date(inv.dueDate as string | number | Date)) : "",
           total: invTotal,
           amountPaid: invPaid,
           creditedAmount: invCredited,
           balanceDue,
-          status: inv.status,
-          subject: inv.subject || "",
+          status: String(inv.status ?? ""),
+          subject: String(inv.subject ?? ""),
         };
       })
       .filter((inv) => inv.balanceDue > 0);
@@ -109,3 +109,4 @@ export async function GET(
     return respondError("Failed to fetch customer invoices.", 500);
   }
 }
+

@@ -17,7 +17,6 @@ import {
   calculateInvoiceTotals,
   type CalculateItemInput,
 } from "@/lib/invoice-utils";
-import type { InvoiceItemPayload, InvoicePayload } from "@/lib/invoice-api-types";
 import { calculateDueDateFromPaymentTerms } from "@/lib/payment-terms";
 import {
   extractNumberPart,
@@ -297,9 +296,9 @@ export async function POST(request: Request) {
     const session = await getServerSession(authOptions);
     if (!session?.user) return respondError("Sign in to create invoices.", 401);
 
-    let payload: InvoicePayload;
+    let payload: Record<string, unknown>;
     try {
-      payload = await request.json();
+      payload = (await request.json()) as Record<string, unknown>;
     } catch {
       return respondError("Submit valid JSON data.", 400);
     }
@@ -312,7 +311,7 @@ export async function POST(request: Request) {
     await connectToDatabase();
 
     // Validate Customer
-    const customerId = payload.customerId;
+    const customerId = payload.customerId as string | undefined;
     if (!customerId || !isValidObjectId(customerId)) {
       return respondError("Select a valid customer.", 400);
     }
@@ -323,7 +322,7 @@ export async function POST(request: Request) {
     }
 
     // Validate Items
-    const rawItems: InvoiceItemPayload[] = Array.isArray(payload.items) ? payload.items : [];
+    const rawItems = Array.isArray(payload.items) ? (payload.items as Array<Record<string, unknown>>) : [];
     if (rawItems.length === 0) {
       return respondError("Add at least one item to the invoice.", 400);
     }
@@ -343,7 +342,7 @@ export async function POST(request: Request) {
     ]);
 
     const orgState = settings?.companyDetails?.state || "";
-    const placeOfSupply = (payload.placeOfSupply || customer.state || orgState).trim();
+    const placeOfSupply = String(payload.placeOfSupply ?? customer.state ?? orgState ?? "").trim();
 
     // Run precise calculation
     const calculatedTotals = calculateInvoiceTotals({
@@ -359,7 +358,7 @@ export async function POST(request: Request) {
     });
 
     // Concurrency-safe unique invoice number allocation
-    let invoiceNumber = (payload.number || "").trim();
+    let invoiceNumber = String(payload.number ?? "").trim();
     const autoGenerate = settings?.autoGenerateNumbering !== false;
     const prefix = settings?.invoicePrefix || "INV-";
     const padding = settings?.numberZeroPadding || 6;
@@ -449,11 +448,11 @@ export async function POST(request: Request) {
     const itemsSnapshot = rawItems.map((item, idx: number) => {
       const calc = calculatedTotals.items[idx];
       return {
-        itemId: item.itemId && isValidObjectId(item.itemId) ? new Types.ObjectId(item.itemId) : undefined,
-        name: (item.name || "").trim() || "Item",
-        description: (item.description || "").trim(),
-        hsnCode: (item.hsnCode || "").trim(),
-        unit: (item.unit || "pcs").trim(),
+        itemId: item.itemId && isValidObjectId(String(item.itemId)) ? new Types.ObjectId(String(item.itemId)) : undefined,
+        name: String(item.name ?? "").trim() || "Item",
+        description: String(item.description ?? "").trim(),
+        hsnCode: String(item.hsnCode ?? "").trim(),
+        unit: String(item.unit ?? "pcs").trim(),
         quantity: calc.quantity,
         rate: calc.rate,
         discount: Number(item.discount) || 0,
@@ -477,13 +476,13 @@ export async function POST(request: Request) {
       : undefined;
 
     // Issue Date and Due Date
-    const issueDate = payload.issueDate ? new Date(payload.issueDate) : new Date();
+    const issueDate = payload.issueDate ? new Date(String(payload.issueDate)) : new Date();
     let dueDate: Date | undefined;
     if (payload.dueDate) {
-      dueDate = new Date(payload.dueDate);
+      dueDate = new Date(String(payload.dueDate));
     } else {
       // Calculate due date based on payment terms (supporting custom and standard terms)
-      const terms = payload.paymentTerms || settings?.defaultPaymentTerms || customer.paymentTerms || "Due on Receipt";
+      const terms = String(payload.paymentTerms ?? settings?.defaultPaymentTerms ?? customer.paymentTerms ?? "Due on Receipt");
       const dbTerms = await PaymentTerm.find({ organizationId }).lean().catch(() => []);
       const formattedTerms = dbTerms.map((t) => ({ name: t.name, days: t.days, isCustom: true }));
       const dateStr = calculateDueDateFromPaymentTerms(issueDate, terms, formattedTerms);
@@ -500,12 +499,12 @@ export async function POST(request: Request) {
       status: initialStatus,
       issueDate,
       dueDate,
-      paymentTerms: payload.paymentTerms || settings?.defaultPaymentTerms || "Due on Receipt",
-      salesperson: (payload.salesperson || "").trim(),
-      subject: (payload.subject || "").trim(),
-      referenceNumber: (payload.referenceNumber || "").trim(),
-      customerNotes: payload.customerNotes || settings?.defaultNotes || "Thank you for your business.",
-      termsAndConditions: payload.termsAndConditions || settings?.defaultTerms || "",
+      paymentTerms: String(payload.paymentTerms ?? settings?.defaultPaymentTerms ?? "Due on Receipt"),
+      salesperson: String(payload.salesperson ?? "").trim(),
+      subject: String(payload.subject ?? "").trim(),
+      referenceNumber: String(payload.referenceNumber ?? "").trim(),
+      customerNotes: String(payload.customerNotes ?? settings?.defaultNotes ?? "Thank you for your business."),
+      termsAndConditions: String(payload.termsAndConditions ?? settings?.defaultTerms ?? ""),
       placeOfSupply,
       currency: String(settings?.currency || org?.currency || "INR"),
       subTotal: calculatedTotals.subTotal,
@@ -526,7 +525,7 @@ export async function POST(request: Request) {
       bankDetailsSnapshot,
       items: itemsSnapshot,
       emailsSent: [],
-    }));
+    })) as unknown as { _id: Types.ObjectId; number?: string; total?: number; status?: string };
 
     // Record Audit Event
     await AuditEvent.create({
@@ -547,9 +546,9 @@ export async function POST(request: Request) {
         ok: true,
         invoice: {
           id: String(newInvoice._id),
-          number: newInvoice.number,
-          total: newInvoice.total,
-          status: newInvoice.status,
+          number: String(newInvoice.number || ""),
+          total: Number(newInvoice.total || 0),
+          status: String(newInvoice.status || "Draft"),
         },
       },
       { status: 201 },

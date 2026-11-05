@@ -55,19 +55,6 @@ const DEMO_PAYMENTS = [
   },
 ];
 
-interface CustomerPaymentPayload {
-  customerId?: string;
-  invoiceId?: string;
-  salesOrderId?: string;
-  orderId?: string;
-  amount?: number;
-  paymentDate?: string | number;
-  paymentMode?: "Bank Transfer" | "NEFT / RTGS" | "UPI" | "Cash" | "Cheque" | "Credit Card";
-  referenceNumber?: string;
-  notes?: string;
-  organizationId?: string;
-}
-
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -145,7 +132,7 @@ interface SalesOrderOptionItem {
   amountPaid: number;
   balanceDue: number;
   status: string;
-  orderDate: string;
+  orderDate?: string;
 }
 
     let payments: PaymentItem[] = [];
@@ -190,7 +177,7 @@ interface SalesOrderOptionItem {
       customers = customersDb.map((c) => ({
         id: String(c._id),
         name: String(c.name || c.companyName || "Customer"),
-        companyName: c.companyName || "",
+        companyName: String(c.companyName || ""),
       }));
 
       const existingCustomerIds = new Set(customers.map((c) => c.id));
@@ -223,8 +210,8 @@ interface SalesOrderOptionItem {
         }
       }
 
-      const invoiceMap = new Map(invoicesDb.map((inv) => [String(inv._id), inv.number]));
-      const salesOrderMap = new Map(salesOrdersDb.map((so) => [String(so._id), so.number]));
+      const invoiceMap = new Map(invoicesDb.map((inv) => [String(inv._id), String(inv.number || "") ]));
+      const salesOrderMap = new Map(salesOrdersDb.map((so) => [String(so._id), String(so.number || "") ]));
 
       salesOrders = salesOrdersDb.map((so) => {
         const total = Number(so.total || 0);
@@ -233,13 +220,13 @@ interface SalesOrderOptionItem {
         const balanceDue = Math.max(0, Math.round((total - paid - credited) * 100) / 100);
         return {
           id: String(so._id),
-          number: so.number,
+          number: String(so.number || ""),
           customerId: String(so.customerId),
           customerName: customerMap.get(String(so.customerId)) || (so as unknown as { customerSnapshot?: { name?: string } }).customerSnapshot?.name || "Customer",
           total,
           amountPaid: paid,
           balanceDue,
-          status: so.status,
+          status: String(so.status || ""),
           orderDate: so.issueDate ? new Date(so.issueDate).toISOString() : "",
         };
       });
@@ -251,13 +238,13 @@ interface SalesOrderOptionItem {
         const balanceDue = Math.max(0, Math.round((total - paid - credited) * 100) / 100);
         return {
           id: String(inv._id),
-          number: inv.number,
+          number: String(inv.number || ""),
           customerId: String(inv.customerId),
           customerName: customerMap.get(String(inv.customerId)) || "Unknown",
           total,
           amountPaid: paid,
           balanceDue,
-          status: inv.status,
+          status: String(inv.status || ""),
           dueDate: inv.dueDate ? new Date(inv.dueDate).toISOString() : "",
         };
       });
@@ -270,17 +257,17 @@ interface SalesOrderOptionItem {
           : "On Account";
         return {
           id: String(p._id),
-          number: p.number || p.receiptNumber || String(p._id).slice(-6),
+          number: String(p.number || p.receiptNumber || String(p._id).slice(-6)),
           customerId: custId,
           customerName: customerMap.get(custId) || "Customer",
           invoiceId: relatedDocId,
           invoiceNumber: linkedNumber,
           amount: Number(p.total || 0),
           paymentDate: p.issueDate || p.createdAt || new Date(),
-          paymentMode: p.method || "Bank Transfer",
-          referenceNumber: p.referenceNumber || "",
-          notes: p.notes || "",
-          status: p.status || "Posted",
+          paymentMode: String(p.method || "Bank Transfer"),
+          referenceNumber: String(p.referenceNumber || ""),
+          notes: String(p.notes || ""),
+          status: String(p.status || "Posted"),
         };
       });
     }
@@ -309,7 +296,6 @@ interface SalesOrderOptionItem {
           amountPaid: 40000,
           balanceDue: 2500,
           status: "Partly paid",
-          dueDate: "",
         },
         {
           id: "demo-inv-4",
@@ -320,7 +306,6 @@ interface SalesOrderOptionItem {
           amountPaid: 0,
           balanceDue: 23900,
           status: "Sent",
-          dueDate: "",
         },
       ];
       salesOrders = [
@@ -414,9 +399,9 @@ export async function POST(request: Request) {
       return respondError("Sign in to record payment.", 401);
     }
 
-    let payload: CustomerPaymentPayload;
+    let payload: Record<string, unknown>;
     try {
-      payload = await request.json();
+      payload = (await request.json()) as Record<string, unknown>;
     } catch {
       return respondError("Submit valid JSON data.", 400);
     }
@@ -443,9 +428,9 @@ export async function POST(request: Request) {
       return respondError("Payment amount must be greater than zero.", 400);
     }
 
-    let organizationId = session.user.organizationId;
-    if (session.user.id === "admin" && customOrgId && isValidObjectId(customOrgId)) {
-      organizationId = customOrgId;
+    let organizationId: string | undefined = session.user.organizationId;
+    if (session.user.id === "admin" && customOrgId && isValidObjectId(String(customOrgId))) {
+      organizationId = String(customOrgId);
     }
 
     if (!organizationId || !isValidObjectId(organizationId)) {
@@ -465,7 +450,7 @@ export async function POST(request: Request) {
     // Verify customer exists
     let customerObjId: Types.ObjectId;
     let customerName = "Customer";
-    if (isValidObjectId(customerId)) {
+    if (typeof customerId === "string" && isValidObjectId(customerId)) {
       customerObjId = new Types.ObjectId(customerId);
       const cust = await Customer.findOne({
         _id: customerObjId,
@@ -477,17 +462,18 @@ export async function POST(request: Request) {
     }
 
     // Verify duplicate payment
-    const checkDate = paymentDate ? new Date(paymentDate) : new Date();
-    if (referenceNumber && referenceNumber.trim()) {
+    const checkDate = paymentDate ? new Date(String(paymentDate)) : new Date();
+    const normalizedReference = typeof referenceNumber === "string" ? referenceNumber.trim() : "";
+    if (normalizedReference) {
       const existing = await SalesDocument.findOne({
         $or: [{ organizationId: orgObjId }, { organizationId: String(orgObjId) }],
         type: "Payment Received",
-        referenceNumber: referenceNumber.trim(),
+        referenceNumber: normalizedReference,
         total: payAmount,
       });
       if (existing) {
         return respondError(
-          `A payment with reference "${referenceNumber.trim()}" and amount ₹${payAmount} has already been recorded.`,
+          `A payment with reference "${normalizedReference}" and amount ₹${payAmount} has already been recorded.`,
           409,
         );
       }
@@ -531,11 +517,6 @@ export async function POST(request: Request) {
     const paymentNumber = `PAY-${String(receiptSeq).padStart(4, "0")}`;
 
     // Create Payment Received document
-    const storedMethod =
-      paymentMode === "Cash" || paymentMode === "UPI" || paymentMode === "Cheque"
-        ? paymentMode
-        : "Bank";
-
     const paymentDoc = await SalesDocument.create({
       organizationId: orgObjId,
       type: "Payment Received",
@@ -547,9 +528,9 @@ export async function POST(request: Request) {
       issueDate: checkDate,
       paymentDate: checkDate,
       total: payAmount,
-      method: storedMethod,
-      referenceNumber: (referenceNumber || "").trim(),
-      notes: (notes || "").trim(),
+      method: typeof paymentMode === "string" && ["Cash", "Bank", "UPI", "Cheque"].includes(paymentMode as "Cash" | "Bank" | "UPI" | "Cheque") ? paymentMode as "Cash" | "Bank" | "UPI" | "Cheque" : "Bank",
+      referenceNumber: String(referenceNumber ?? "").trim(),
+      notes: String(notes ?? "").trim(),
       currency: "INR",
     });
 

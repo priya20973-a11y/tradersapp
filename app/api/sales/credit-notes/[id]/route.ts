@@ -63,21 +63,24 @@ export async function GET(
           "Unknown Customer",
         customerSnapshot: doc.customerSnapshot,
         referenceNumber: doc.referenceNumber || "",
-        creditNoteDate: doc.issueDate ? new Date(doc.issueDate).toISOString() : "",
+        creditNoteDate: doc.issueDate ? new Date(doc.issueDate as string | number | Date).toISOString() : "",
         status: doc.status || "Draft",
         accountsReceivable: doc.accountsReceivable || "Accounts Receivable",
         salesperson: doc.salesperson || "",
         subject: doc.subject || "",
-        items: (doc.items || []).map((it) => ({
-          id: it._id ? String(it._id) : undefined,
-          itemId: it.itemId ? String(it.itemId) : undefined,
-          name: it.name,
-          description: it.description || "",
-          account: it.account || "Sales",
-          quantity: Number(it.quantity || 1),
-          rate: Number(it.rate || 0),
-          amount: Number(it.amount || 0),
-        })),
+        items: ((doc.items || []) as unknown[]).map((it) => {
+          const item = it as Record<string, unknown>;
+          return {
+            id: item._id ? String(item._id) : undefined,
+            itemId: item.itemId ? String(item.itemId) : undefined,
+            name: typeof item.name === "string" ? item.name : undefined,
+            description: typeof item.description === "string" ? item.description : "",
+            account: typeof item.account === "string" ? item.account : "Sales",
+            quantity: Number(item.quantity || 1),
+            rate: Number(item.rate || 0),
+            amount: Number(item.amount || 0),
+          };
+        }),
         subTotal: Number(doc.subTotal || 0),
         discount: Number(doc.discount || 0),
         discountType: doc.discountType || "percent",
@@ -90,15 +93,15 @@ export async function GET(
         balanceRemaining: balance,
         customerNotes: doc.customerNotes || "",
         termsAndConditions: doc.termsAndConditions || "",
-        invoicesApplied: (doc.invoicesApplied || []).map((app) => ({
+        invoicesApplied: ((doc.invoicesApplied || []) as Array<Record<string, unknown>>).map((app) => ({
           invoiceId: String(app.invoiceId),
-          invoiceNumber: app.invoiceNumber,
+          invoiceNumber: typeof app.invoiceNumber === "string" ? app.invoiceNumber : undefined,
           amountApplied: Number(app.amountApplied || 0),
-          appliedDate: app.appliedDate ? new Date(app.appliedDate).toISOString() : "",
-          notes: app.notes || "",
+          appliedDate: app.appliedDate ? new Date(app.appliedDate as string | number | Date).toISOString() : "",
+          notes: typeof app.notes === "string" ? app.notes : "",
         })),
-        createdAt: doc.createdAt ? new Date(doc.createdAt).toISOString() : "",
-        updatedAt: doc.updatedAt ? new Date(doc.updatedAt).toISOString() : "",
+        createdAt: doc.createdAt ? new Date(doc.createdAt as string | number | Date).toISOString() : "",
+        updatedAt: doc.updatedAt ? new Date(doc.updatedAt as string | number | Date).toISOString() : "",
       },
     });
   } catch (error) {
@@ -357,3 +360,4 @@ export async function DELETE(
     return respondError("Failed to delete credit note.", 500);
   }
 }
+

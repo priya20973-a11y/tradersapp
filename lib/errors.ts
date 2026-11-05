@@ -152,7 +152,19 @@ export class ServiceUnavailableError extends AppError {
 
 /** Type guard: is this an AppError we know how to handle? */
 export function isAppError(error: unknown): error is AppError {
-  return error instanceof AppError;
+  if (error instanceof AppError) return true;
+  if (typeof error !== "object" || error === null) return false;
+
+  const candidate = error as Record<string, unknown>;
+  return (
+    typeof candidate.message === "string" &&
+    typeof candidate.statusCode === "number" &&
+    Number.isInteger(candidate.statusCode) &&
+    candidate.statusCode >= 400 &&
+    candidate.statusCode <= 599 &&
+    typeof candidate.code === "string" &&
+    typeof candidate.isOperational === "boolean"
+  );
 }
 
 /** Type guard: is this a MongoDB duplicate-key error (code 11000)? */

@@ -131,30 +131,32 @@ export function NewCreditNoteForm({
   const [settings, setSettings] = useState<CreditNotePreferencesData | null>(null);
 
   // Form Fields
-  const [customerId, setCustomerId] = useState(String(initialData?.customerId || ""));
+  const resolvedInitialData = initialData ?? {};
+
+  const [customerId, setCustomerId] = useState(String(resolvedInitialData.customerId || ""));
   const [creditNoteNumber, setCreditNoteNumber] = useState(
-    String(initialData?.creditNoteNumber || initialData?.number || "CN-00002"),
+    String(resolvedInitialData.creditNoteNumber || resolvedInitialData.number || "CN-00002"),
   );
   const [referenceNumber, setReferenceNumber] = useState(
-    String(initialData?.referenceNumber || ""),
+    String(resolvedInitialData.referenceNumber || ""),
   );
   const [creditNoteDate, setCreditNoteDate] = useState(() => {
-    if (initialData?.creditNoteDate || initialData?.issueDate) {
-      const d = new Date(String(initialData.creditNoteDate || initialData.issueDate));
+    if (resolvedInitialData.creditNoteDate || resolvedInitialData.issueDate) {
+      const d = new Date(String(resolvedInitialData.creditNoteDate || resolvedInitialData.issueDate));
       return !isNaN(d.getTime()) ? d.toISOString().split("T")[0] : new Date().toISOString().split("T")[0];
     }
     return new Date().toISOString().split("T")[0];
   });
   const [accountsReceivable, setAccountsReceivable] = useState(
-    String(initialData?.accountsReceivable || "Accounts Receivable"),
+    String(resolvedInitialData.accountsReceivable || "Accounts Receivable"),
   );
-  const [salesperson, setSalesperson] = useState(String(initialData?.salesperson || ""));
-  const [subject, setSubject] = useState(String(initialData?.subject || ""));
+  const [salesperson, setSalesperson] = useState(String(resolvedInitialData.salesperson || ""));
+  const [subject, setSubject] = useState(String(resolvedInitialData.subject || ""));
 
   // Items
   const [items, setItems] = useState<ItemRow[]>(() => {
-    if (initialData && Array.isArray(initialData.items) && initialData.items.length > 0) {
-      return initialData.items.map((it, idx: number) => ({
+    if (Array.isArray(resolvedInitialData.items) && resolvedInitialData.items.length > 0) {
+      return resolvedInitialData.items.map((it, idx: number) => ({
         id: `row-${idx + 1}`,
         itemId: it.itemId ? String(it.itemId) : undefined,
         name: String(it.name || ""),
@@ -180,27 +182,27 @@ export function NewCreditNoteForm({
 
   // Discount & Tax Calculations
   const [discountVal, setDiscountVal] = useState<string>(
-    initialData?.discount !== undefined ? String(initialData.discount) : "0",
+    resolvedInitialData.discount !== undefined ? String(resolvedInitialData.discount) : "0",
   );
   const [discountType, setDiscountType] = useState<"percent" | "amount">(
-    initialData?.discountType || "percent",
+    resolvedInitialData.discountType || "percent",
   );
   const [taxMode, setTaxMode] = useState<"TDS" | "TCS">(
-    initialData?.tdsTcsType === "TCS" ? "TCS" : "TDS",
+    resolvedInitialData.tdsTcsType === "TCS" ? "TCS" : "TDS",
   );
   const [selectedTaxRate, setSelectedTaxRate] = useState<number>(
-    initialData?.tdsTcsRate !== undefined ? Number(initialData.tdsTcsRate) : 0,
+    resolvedInitialData.tdsTcsRate !== undefined ? Number(resolvedInitialData.tdsTcsRate) : 0,
   );
   const [adjustmentStr, setAdjustmentStr] = useState<string>(
-    initialData?.adjustment !== undefined ? String(initialData.adjustment) : "0",
+    resolvedInitialData.adjustment !== undefined ? String(resolvedInitialData.adjustment) : "0",
   );
 
   // Notes & Terms
   const [customerNotes, setCustomerNotes] = useState(
-    initialData?.customerNotes || "",
+    resolvedInitialData.customerNotes || "",
   );
   const [termsAndConditions, setTermsAndConditions] = useState(
-    initialData?.termsAndConditions || "",
+    resolvedInitialData.termsAndConditions || "",
   );
 
   // Submission State
@@ -453,13 +455,8 @@ export function NewCreditNoteForm({
         termsAndConditions,
       };
 
-      const editId = initialData?.id;
-      if (isEditMode && !editId) {
-        setError("Credit note data is unavailable for editing.");
-        return;
-      }
-      const endpoint = isEditMode
-        ? `/api/sales/credit-notes/${editId}`
+      const endpoint = isEditMode && resolvedInitialData.id
+        ? `/api/sales/credit-notes/${resolvedInitialData.id}`
         : `/api/sales/credit-notes`;
       const method = isEditMode ? "PUT" : "POST";
 

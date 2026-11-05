@@ -15,7 +15,6 @@ import {
   calculateInvoiceTotals,
   type CalculateItemInput,
 } from "@/lib/invoice-utils";
-import type { InvoiceItemPayload, InvoicePayload } from "@/lib/invoice-api-types";
 import {
   databaseUnavailable,
   getSalesScope,
@@ -238,9 +237,9 @@ export async function PUT(
     const session = await getServerSession(authOptions);
     if (!session?.user) return respondError("Sign in to edit invoice.", 401);
 
-    let payload: InvoicePayload;
+    let payload: Record<string, unknown>;
     try {
-      payload = await request.json();
+      payload = (await request.json()) as Record<string, unknown>;
     } catch {
       return respondError("Submit valid JSON data.", 400);
     }
@@ -267,16 +266,14 @@ export async function PUT(
     }
 
     // Validate Customer if changed
-    const customerId = payload.customerId || invoice.customerId;
+    const customerId = (payload.customerId as string | undefined) || invoice.customerId;
     const customer = await Customer.findOne({ _id: customerId, organizationId }).lean();
     if (!customer) {
       return respondError("Customer not found.", 404);
     }
 
     // Validate Items
-    const rawItems: InvoiceItemPayload[] = Array.isArray(payload.items)
-      ? payload.items
-      : invoice.items || [];
+    const rawItems = (Array.isArray(payload.items) ? payload.items : invoice.items || []) as Array<Record<string, unknown>>;
     if (rawItems.length === 0) {
       return respondError("Invoice must have at least one line item.", 400);
     }
@@ -292,7 +289,7 @@ export async function PUT(
     const settings = await InvoiceSettings.findOne({ organizationId });
 
     const orgState = settings?.companyDetails?.state || "";
-    const placeOfSupply = (payload.placeOfSupply || invoice.placeOfSupply || customer.state || orgState).trim();
+    const placeOfSupply = ((payload.placeOfSupply as string | undefined) || invoice.placeOfSupply || customer.state || orgState).trim();
 
     const calculatedTotals = calculateInvoiceTotals({
       items: validItems,
@@ -341,12 +338,17 @@ export async function PUT(
 
     const itemsSnapshot = rawItems.map((item, idx: number) => {
       const calc = calculatedTotals.items[idx];
+      const itemIdValue = item.itemId !== undefined && item.itemId !== null ? String(item.itemId) : "";
+      const nameValue = typeof item.name === "string" ? item.name : String(item.name ?? "");
+      const descriptionValue = typeof item.description === "string" ? item.description : String(item.description ?? "");
+      const hsnCodeValue = typeof item.hsnCode === "string" ? item.hsnCode : String(item.hsnCode ?? "");
+      const unitValue = typeof item.unit === "string" ? item.unit : String(item.unit ?? "pcs");
       return {
-        itemId: item.itemId && isValidObjectId(item.itemId) ? new Types.ObjectId(item.itemId) : undefined,
-        name: (item.name || "").trim() || "Item",
-        description: (item.description || "").trim(),
-        hsnCode: (item.hsnCode || "").trim(),
-        unit: (item.unit || "pcs").trim(),
+        itemId: itemIdValue && isValidObjectId(itemIdValue) ? new Types.ObjectId(itemIdValue) : undefined,
+        name: nameValue.trim() || "Item",
+        description: descriptionValue.trim(),
+        hsnCode: hsnCodeValue.trim(),
+        unit: unitValue.trim() || "pcs",
         quantity: calc.quantity,
         rate: calc.rate,
         discount: Number(item.discount) || 0,
@@ -357,19 +359,19 @@ export async function PUT(
       };
     });
 
-    const issueDate = payload.issueDate ? new Date(payload.issueDate) : invoice.issueDate;
-    const dueDate = payload.dueDate ? new Date(payload.dueDate) : invoice.dueDate;
+    const issueDate = payload.issueDate ? new Date(String(payload.issueDate)) : invoice.issueDate;
+    const dueDate = payload.dueDate ? new Date(String(payload.dueDate)) : invoice.dueDate;
 
     invoice.customerId = new Types.ObjectId(String(customer._id));
     invoice.customerSnapshot = customerSnapshot;
     invoice.issueDate = issueDate;
     invoice.dueDate = dueDate;
-    invoice.paymentTerms = payload.paymentTerms || invoice.paymentTerms;
-    invoice.salesperson = payload.salesperson !== undefined ? payload.salesperson.trim() : invoice.salesperson;
-    invoice.subject = payload.subject !== undefined ? payload.subject.trim() : invoice.subject;
-    invoice.referenceNumber = payload.referenceNumber !== undefined ? payload.referenceNumber.trim() : invoice.referenceNumber;
-    invoice.customerNotes = payload.customerNotes !== undefined ? payload.customerNotes : invoice.customerNotes;
-    invoice.termsAndConditions = payload.termsAndConditions !== undefined ? payload.termsAndConditions : invoice.termsAndConditions;
+    invoice.paymentTerms = typeof payload.paymentTerms === "string" ? payload.paymentTerms : invoice.paymentTerms;
+    invoice.salesperson = payload.salesperson !== undefined ? String(payload.salesperson).trim() : invoice.salesperson;
+    invoice.subject = payload.subject !== undefined ? String(payload.subject).trim() : invoice.subject;
+    invoice.referenceNumber = payload.referenceNumber !== undefined ? String(payload.referenceNumber).trim() : invoice.referenceNumber;
+    invoice.customerNotes = payload.customerNotes !== undefined ? String(payload.customerNotes) : invoice.customerNotes;
+    invoice.termsAndConditions = payload.termsAndConditions !== undefined ? String(payload.termsAndConditions) : invoice.termsAndConditions;
     invoice.placeOfSupply = placeOfSupply;
     invoice.subTotal = calculatedTotals.subTotal;
     invoice.discount = calculatedTotals.totalDiscount;

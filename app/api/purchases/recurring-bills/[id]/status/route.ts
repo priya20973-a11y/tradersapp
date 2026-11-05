@@ -46,13 +46,15 @@ export async function POST(
     }
 
     // Toggle status or use requested status
-    let nextStatus: "Active" | "Paused" | "Expired" = profile.status;
+    let nextStatus: "Active" | "Paused" | "Expired" =
+      (profile.status as "Active" | "Paused" | "Expired") || "Active";
+    const requestedStatus = payload.status;
     if (
-      payload.status === "Active" ||
-      payload.status === "Paused" ||
-      payload.status === "Expired"
+      requestedStatus === "Active" ||
+      requestedStatus === "Paused" ||
+      requestedStatus === "Expired"
     ) {
-      nextStatus = payload.status;
+      nextStatus = requestedStatus;
     } else {
       nextStatus = profile.status === "Active" ? "Paused" : "Active";
     }

@@ -64,30 +64,34 @@ export async function GET(
       .sort({ issueDate: 1, createdAt: 1 })
       .lean();
 
-    const availableCredits = availableCreditDocs.map((c) => {
-        const tot = Number(c.total || 0);
-        const cred = Number(c.creditedAmount || 0);
+    const availableCredits = (availableCreditDocs as unknown[])
+      .map((c) => {
+        const credit = c as Record<string, unknown>;
+        const tot = Number(credit.total || 0);
+        const cred = Number(credit.creditedAmount || 0);
         const bal =
-          c.balanceRemaining !== undefined
-            ? Number(c.balanceRemaining)
+          credit.balanceRemaining !== undefined
+            ? Number(credit.balanceRemaining)
             : Math.max(0, Math.round((tot - cred) * 100) / 100);
 
+        const customerSnapshot = credit.customerSnapshot as Record<string, unknown> | undefined;
+
         return {
-          id: String(c._id),
-          creditNoteNumber: c.number,
-          customerId: String(c.customerId),
+          id: String(credit._id),
+          creditNoteNumber: typeof credit.number === "string" ? credit.number : undefined,
+          customerId: String(credit.customerId),
           customerName:
-            c.customerSnapshot?.companyName ||
-            c.customerSnapshot?.name ||
-            invoice.customerSnapshot?.name ||
+            (typeof customerSnapshot?.companyName === "string" ? customerSnapshot.companyName : undefined) ||
+            (typeof customerSnapshot?.name === "string" ? customerSnapshot.name : undefined) ||
+            (typeof invoice.customerSnapshot?.name === "string" ? invoice.customerSnapshot.name : undefined) ||
             "Customer",
-          creditNoteDate: c.issueDate ? formatDateOnly(new Date(c.issueDate)) : "",
-          referenceNumber: c.referenceNumber || "",
-          subject: c.subject || "",
+          creditNoteDate: credit.issueDate ? formatDateOnly(new Date(credit.issueDate as string | number | Date)) : "",
+          referenceNumber: typeof credit.referenceNumber === "string" ? credit.referenceNumber : "",
+          subject: typeof credit.subject === "string" ? credit.subject : "",
           total: tot,
           creditedAmount: cred,
           balanceRemaining: bal,
-          status: c.status,
+          status: typeof credit.status === "string" ? credit.status : undefined,
         };
       })
       .filter((c) => c.balanceRemaining > 0);
@@ -127,3 +131,4 @@ export async function GET(
     return respondError("Failed to fetch available credit notes for invoice.", 500);
   }
 }
+

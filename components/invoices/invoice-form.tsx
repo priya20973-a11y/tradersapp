@@ -67,7 +67,6 @@ export function InvoiceForm({
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showItemModal, setShowItemModal] = useState(false);
   const [showNumberConfigModal, setShowNumberConfigModal] = useState(false);
-  const [, setActiveItemRowId] = useState<string | null>(null);
 
   // Settings & Numbering State
   const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettingsData | null>(null);
@@ -777,7 +776,6 @@ export function InvoiceForm({
           <button
             type="button"
             onClick={() => {
-              setActiveItemRowId(null);
               setShowItemModal(true);
             }}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 transition cursor-pointer"

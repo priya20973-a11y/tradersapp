@@ -3,15 +3,7 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import {
-  Vendor,
-  PurchaseBill,
-  VendorPayment,
-  VendorCredit,
-  type PurchaseBillRecord,
-  type VendorCreditRecord,
-  type VendorPaymentRecord,
-} from "@/models";
+import { Vendor, PurchaseBill, VendorPayment, VendorCredit } from "@/models";
 import { calculateVendorLedger } from "@/lib/ledger-utils";
 
 const DEMO_VENDORS = [
@@ -105,8 +97,8 @@ export async function GET(request: Request) {
       organizationId = requestedOrgId;
     }
 
-interface LedgerVendorItem {
-  _id: Types.ObjectId | string;
+type LedgerVendorItem = {
+  _id: unknown;
   name: string;
   email?: string;
   phone?: string;
@@ -114,9 +106,9 @@ interface LedgerVendorItem {
   state?: string;
   openingBalance?: number;
   status?: string;
-}
+};
 
-interface VendorLedgerTx {
+type VendorLedgerTx = {
   id: string;
   date: string | Date;
   type: "Purchase Bill" | "Payment Made" | "Vendor Credit";
@@ -124,7 +116,42 @@ interface VendorLedgerTx {
   description?: string;
   amount: number;
   rawDoc?: Record<string, unknown>;
-}
+};
+
+type PurchaseBillRecord = {
+  _id: unknown;
+  billDate?: unknown;
+  createdAt?: unknown;
+  billNumber?: unknown;
+  notes?: unknown;
+  total?: unknown;
+  amountPaid?: unknown;
+  status?: unknown;
+};
+
+type VendorPaymentRecord = {
+  _id: unknown;
+  paymentDate?: unknown;
+  createdAt?: unknown;
+  paymentNumber?: unknown;
+  notes?: unknown;
+  paymentMode?: unknown;
+  amount?: unknown;
+  referenceNumber?: unknown;
+  status?: unknown;
+};
+
+type VendorCreditRecord = {
+  _id: unknown;
+  vendorCreditDate?: unknown;
+  createdAt?: unknown;
+  creditNoteNumber?: unknown;
+  subject?: unknown;
+  notes?: unknown;
+  total?: unknown;
+  status?: unknown;
+  balanceRemaining?: unknown;
+};
 
     let vendorsList: LedgerVendorItem[] = [];
     let selectedVendor: LedgerVendorItem | null = null;
@@ -149,12 +176,11 @@ interface VendorLedgerTx {
         .lean();
 
       if (vendorsList.length > 0) {
-        if (requestedVendId && isValidObjectId(requestedVendId)) {
-          selectedVendor = vendorsList.find((v) => String(v._id) === requestedVendId) ?? null;
-        }
-        if (!selectedVendor) {
-          selectedVendor = vendorsList[0];
-        }
+        const matchedVendor = requestedVendId && isValidObjectId(requestedVendId)
+          ? vendorsList.find((v) => String(v._id) === requestedVendId)
+          : undefined;
+
+        selectedVendor = matchedVendor ?? vendorsList[0] ?? null;
 
         if (selectedVendor) {
           const vendObjId = new Types.ObjectId(String(selectedVendor._id));
@@ -174,7 +200,8 @@ interface VendorLedgerTx {
       vendorsList = DEMO_VENDORS.map((v) => ({ _id: v.id, ...v }));
       selectedVendor =
         (requestedVendId && vendorsList.find((v) => String(v._id) === requestedVendId)) ||
-        vendorsList[0];
+        vendorsList[0] ||
+        null;
     }
 
     const openingBalance = Number(selectedVendor.openingBalance || 0);
@@ -182,13 +209,13 @@ interface VendorLedgerTx {
     let rawTransactions: VendorLedgerTx[] = [];
 
     if (billsList.length > 0 || paymentsList.length > 0 || creditsList.length > 0) {
-      const formattedBills = billsList.map((b) => ({
+      const formattedBills: VendorLedgerTx[] = billsList.map((b) => ({
         id: String(b._id),
-        date: b.billDate || b.createdAt,
-        type: "Purchase Bill" as const,
-        referenceNumber: b.billNumber,
-        description: b.notes || `Purchase Bill #${b.billNumber}`,
-        amount: Number(b.total || 0),
+        date: (b.billDate as string | Date | undefined) || (b.createdAt as string | Date | undefined) || new Date(),
+        type: "Purchase Bill",
+        referenceNumber: String(b.billNumber ?? ""),
+        description: String(b.notes ?? `Purchase Bill #${b.billNumber ?? ""}`),
+        amount: Number(b.total ?? 0),
         rawDoc: {
           id: String(b._id),
           number: b.billNumber,
@@ -198,13 +225,13 @@ interface VendorLedgerTx {
         },
       }));
 
-      const formattedPayments = paymentsList.map((p) => ({
+      const formattedPayments: VendorLedgerTx[] = paymentsList.map((p) => ({
         id: String(p._id),
-        date: p.paymentDate || p.createdAt,
-        type: "Payment Made" as const,
-        referenceNumber: p.paymentNumber,
-        description: p.notes || `Payment Made (${p.paymentMode})`,
-        amount: Number(p.amount || 0),
+        date: (p.paymentDate as string | Date | undefined) || (p.createdAt as string | Date | undefined) || new Date(),
+        type: "Payment Made",
+        referenceNumber: String(p.paymentNumber ?? ""),
+        description: String(p.notes ?? `Payment Made (${p.paymentMode ?? ""})`),
+        amount: Number(p.amount ?? 0),
         rawDoc: {
           id: String(p._id),
           number: p.paymentNumber,
@@ -214,13 +241,13 @@ interface VendorLedgerTx {
         },
       }));
 
-      const formattedCredits = creditsList.map((c) => ({
+      const formattedCredits: VendorLedgerTx[] = creditsList.map((c) => ({
         id: String(c._id),
-        date: c.vendorCreditDate || c.createdAt,
-        type: "Vendor Credit" as const,
-        referenceNumber: c.creditNoteNumber,
-        description: c.subject || c.notes || `Vendor Credit #${c.creditNoteNumber}`,
-        amount: Number(c.total || 0),
+        date: (c.vendorCreditDate as string | Date | undefined) || (c.createdAt as string | Date | undefined) || new Date(),
+        type: "Vendor Credit",
+        referenceNumber: String(c.creditNoteNumber ?? ""),
+        description: String(c.subject ?? c.notes ?? `Vendor Credit #${c.creditNoteNumber ?? ""}`),
+        amount: Number(c.total ?? 0),
         rawDoc: {
           id: String(c._id),
           number: c.creditNoteNumber,

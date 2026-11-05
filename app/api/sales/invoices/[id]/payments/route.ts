@@ -15,15 +15,6 @@ import {
   respondError,
 } from "../../../sales-service";
 
-interface InvoicePaymentPayload {
-  organizationId?: string;
-  amount?: number;
-  method?: "Cash" | "Bank" | "UPI" | "Cheque";
-  paymentDate?: string | number;
-  referenceNumber?: string;
-  notes?: string;
-}
-
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -87,9 +78,9 @@ export async function POST(
     const session = await getServerSession(authOptions);
     if (!session?.user) return respondError("Sign in to record payment.", 401);
 
-    let payload: InvoicePaymentPayload;
+    let payload: Record<string, unknown>;
     try {
-      payload = await request.json();
+      payload = (await request.json()) as Record<string, unknown>;
     } catch {
       return respondError("Submit valid JSON data.", 400);
     }
@@ -132,13 +123,10 @@ export async function POST(
       );
     }
 
-    const method =
-      payload.method === "Cash" ||
-      payload.method === "Bank" ||
-      payload.method === "UPI" ||
-      payload.method === "Cheque"
-        ? payload.method
-        : "Bank";
+    const validMethods = ["Cash", "Bank", "UPI", "Cheque"] as const;
+    const method = typeof payload.method === "string" && validMethods.includes(payload.method as (typeof validMethods)[number])
+      ? (payload.method as (typeof validMethods)[number])
+      : "Bank";
 
     // Allocate unique Receipt Number
     const sequence = await DocumentSequence.findOneAndUpdate(
@@ -149,7 +137,7 @@ export async function POST(
     const receiptSeq = sequence?.nextNumber || 1;
     const receiptNumber = `PAY-${String(receiptSeq).padStart(4, "0")}`;
 
-    const paymentDate = payload.paymentDate ? new Date(payload.paymentDate) : new Date();
+    const paymentDate = payload.paymentDate ? new Date(String(payload.paymentDate)) : new Date();
 
     // Create Payment Received SalesDocument
     const paymentDoc = await SalesDocument.create({
@@ -164,8 +152,8 @@ export async function POST(
       paymentDate,
       total: paymentAmount,
       method,
-      referenceNumber: (payload.referenceNumber || "").trim(),
-      notes: (payload.notes || "").trim(),
+      referenceNumber: String(payload.referenceNumber ?? "").trim(),
+      notes: String(payload.notes ?? "").trim(),
       currency: invoice.currency || "INR",
     });
 
