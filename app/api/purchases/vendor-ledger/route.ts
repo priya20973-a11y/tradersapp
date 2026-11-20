@@ -6,74 +6,6 @@ import { connectToDatabase } from "@/lib/db";
 import { Vendor, PurchaseBill, VendorPayment, VendorCredit } from "@/models";
 import { calculateVendorLedger } from "@/lib/ledger-utils";
 
-const DEMO_VENDORS = [
-  {
-    id: "demo-vend-1",
-    name: "Mohan Traders",
-    email: "mohan@traders.in",
-    phone: "+91 98450 12345",
-    gstin: "29AABCM5678J1Z2",
-    state: "Karnataka",
-    openingBalance: 18200,
-    status: "Active",
-  },
-  {
-    id: "demo-vend-2",
-    name: "Shree Packaging Industries",
-    email: "finance@shreepack.in",
-    phone: "+91 98220 98765",
-    gstin: "27AABCS4321K1Z4",
-    state: "Maharashtra",
-    openingBalance: 9600,
-    status: "Active",
-  },
-  {
-    id: "demo-vend-3",
-    name: "Metro Logistics & Warehousing",
-    email: "payables@metrologistics.in",
-    phone: "+91 98111 22334",
-    gstin: "27AABCM8765L1Z6",
-    state: "Maharashtra",
-    openingBalance: 12000,
-    status: "Active",
-  },
-];
-
-const DEMO_VENDOR_TRANSACTIONS = [
-  {
-    id: "demo-bill-1",
-    date: "2026-10-03T09:00:00.000Z",
-    type: "Purchase Bill" as const,
-    referenceNumber: "BILL-4421",
-    description: "Purchase Bill for Premium Pulses Lot A",
-    amount: 68000,
-  },
-  {
-    id: "demo-vpay-1",
-    date: "2026-10-07T11:30:00.000Z",
-    type: "Payment Made" as const,
-    referenceNumber: "VPAY-0891",
-    description: "Disbursement via NEFT (Ref: HDFCN2628109)",
-    amount: 50000,
-  },
-  {
-    id: "demo-bill-2",
-    date: "2026-10-12T14:15:00.000Z",
-    type: "Purchase Bill" as const,
-    referenceNumber: "BILL-4424",
-    description: "Purchase Bill for Moisture-proof Grain Sacks",
-    amount: 32000,
-  },
-  {
-    id: "demo-vpay-2",
-    date: "2026-10-18T16:45:00.000Z",
-    type: "Payment Made" as const,
-    referenceNumber: "VPAY-0895",
-    description: "Disbursement via IMPS (Ref: ICICI9928371192)",
-    amount: 35000,
-  },
-];
-
 function respondError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
@@ -97,61 +29,65 @@ export async function GET(request: Request) {
       organizationId = requestedOrgId;
     }
 
-type LedgerVendorItem = {
-  _id: unknown;
-  name: string;
-  email?: string;
-  phone?: string;
-  gstin?: string;
-  state?: string;
-  openingBalance?: number;
-  status?: string;
-};
+    if (!organizationId) {
+      return respondError("Unauthorized", 401);
+    }
 
-type VendorLedgerTx = {
-  id: string;
-  date: string | Date;
-  type: "Purchase Bill" | "Payment Made" | "Vendor Credit";
-  referenceNumber: string;
-  description?: string;
-  amount: number;
-  rawDoc?: Record<string, unknown>;
-};
+    type LedgerVendorItem = {
+      _id: unknown;
+      name: string;
+      email?: string;
+      phone?: string;
+      gstin?: string;
+      state?: string;
+      openingBalance?: number;
+      status?: string;
+    };
 
-type PurchaseBillRecord = {
-  _id: unknown;
-  billDate?: unknown;
-  createdAt?: unknown;
-  billNumber?: unknown;
-  notes?: unknown;
-  total?: unknown;
-  amountPaid?: unknown;
-  status?: unknown;
-};
+    type VendorLedgerTx = {
+      id: string;
+      date: string | Date;
+      type: "Purchase Bill" | "Payment Made" | "Vendor Credit";
+      referenceNumber: string;
+      description?: string;
+      amount: number;
+      rawDoc?: Record<string, unknown>;
+    };
 
-type VendorPaymentRecord = {
-  _id: unknown;
-  paymentDate?: unknown;
-  createdAt?: unknown;
-  paymentNumber?: unknown;
-  notes?: unknown;
-  paymentMode?: unknown;
-  amount?: unknown;
-  referenceNumber?: unknown;
-  status?: unknown;
-};
+    type PurchaseBillRecord = {
+      _id: unknown;
+      billDate?: unknown;
+      createdAt?: unknown;
+      billNumber?: unknown;
+      notes?: unknown;
+      total?: unknown;
+      amountPaid?: unknown;
+      status?: unknown;
+    };
 
-type VendorCreditRecord = {
-  _id: unknown;
-  vendorCreditDate?: unknown;
-  createdAt?: unknown;
-  creditNoteNumber?: unknown;
-  subject?: unknown;
-  notes?: unknown;
-  total?: unknown;
-  status?: unknown;
-  balanceRemaining?: unknown;
-};
+    type VendorPaymentRecord = {
+      _id: unknown;
+      paymentDate?: unknown;
+      createdAt?: unknown;
+      paymentNumber?: unknown;
+      notes?: unknown;
+      paymentMode?: unknown;
+      amount?: unknown;
+      referenceNumber?: unknown;
+      status?: unknown;
+    };
+
+    type VendorCreditRecord = {
+      _id: unknown;
+      vendorCreditDate?: unknown;
+      createdAt?: unknown;
+      creditNoteNumber?: unknown;
+      subject?: unknown;
+      notes?: unknown;
+      total?: unknown;
+      status?: unknown;
+      balanceRemaining?: unknown;
+    };
 
     let vendorsList: LedgerVendorItem[] = [];
     let selectedVendor: LedgerVendorItem | null = null;
@@ -197,11 +133,23 @@ type VendorCreditRecord = {
     }
 
     if (!selectedVendor) {
-      vendorsList = DEMO_VENDORS.map((v) => ({ _id: v.id, ...v }));
-      selectedVendor =
-        (requestedVendId && vendorsList.find((v) => String(v._id) === requestedVendId)) ||
-        vendorsList[0] ||
-        null;
+      return NextResponse.json({
+        vendor: null,
+        vendors: vendorsList.map((v) => ({
+          id: String(v._id),
+          name: v.name,
+          openingBalance: Number(v.openingBalance || 0),
+        })),
+        summary: {
+          openingBalance: 0,
+          totalDebit: 0,
+          totalCredit: 0,
+          closingBalance: 0,
+          netOutstanding: 0,
+          transactionCount: 0,
+        },
+        lines: [],
+      });
     }
 
     const openingBalance = Number(selectedVendor.openingBalance || 0);
@@ -259,7 +207,7 @@ type VendorCreditRecord = {
 
       rawTransactions = [...formattedBills, ...formattedPayments, ...formattedCredits];
     } else {
-      rawTransactions = DEMO_VENDOR_TRANSACTIONS;
+      rawTransactions = [];
     }
 
     const calculated = calculateVendorLedger(openingBalance, rawTransactions, {

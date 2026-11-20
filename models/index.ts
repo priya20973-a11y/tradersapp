@@ -3,6 +3,9 @@ import mongoose, { Schema, type Model } from "mongoose";
 // Re-export trading models and types
 export * from "./trading";
 
+// Re-export inventory models and types
+export * from "./inventory";
+
 // Re-export sales models and types
 export * from "./sales";
 
@@ -66,7 +69,7 @@ const OrganizationSchema = new Schema(
     bankDetails: BankDetailsSchema,
     currency: { type: String, default: "INR" },
     financialYear: String,
-    status: { type: String, enum: ["pending", "active", "inactive"], default: "pending" },
+    status: { type: String, enum: ["pending", "active", "inactive", "rejected"], default: "pending" },
     orgId: { type: String, required: true, unique: true },
   },
   { timestamps: true },

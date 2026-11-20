@@ -9,10 +9,50 @@ import {
   Organization,
   SalesDocument,
 } from "@/models";
+import { recordCreditNoteReturn } from "@/lib/inventory-service";
 import {
   extractNumberPart,
 } from "@/lib/credit-note-numbering";
 import { allocateNextCreditNoteNumber } from "@/lib/credit-note-service";
+
+interface CreditNoteDoc {
+  _id: unknown;
+  number?: string;
+  customerId?: unknown;
+  customerSnapshot?: { companyName?: string; name?: string };
+  referenceNumber?: string;
+  issueDate?: Date | string;
+  status?: string;
+  total?: number;
+  subTotal?: number;
+  discount?: number;
+  discountType?: "percent" | "amount";
+  adjustment?: number;
+  customerNotes?: string;
+  termsAndConditions?: string;
+  creditedAmount?: number;
+  balanceRemaining?: number;
+  invoicesApplied?: unknown[];
+  subject?: string;
+  salesperson?: string;
+  accountsReceivable?: string;
+  items?: Array<{
+    itemId?: unknown;
+    name?: string;
+    description?: string;
+    quantity?: number;
+    rate?: number;
+    amount?: number;
+    unit?: string;
+  }>;
+  createdAt?: Date | string;
+}
+
+interface CustomerOption {
+  _id: unknown;
+  name?: string;
+  companyName?: string;
+}
 
 export async function GET(request: Request) {
   try {
@@ -65,7 +105,7 @@ export async function GET(request: Request) {
         .lean(),
     ]);
 
-    let notes = notesDocs.map((doc) => {
+    let notes = (notesDocs as unknown as CreditNoteDoc[]).map((doc) => {
       const total = Number(doc.total || 0);
       const credited = Number(doc.creditedAmount || 0);
       const balance =
@@ -75,7 +115,7 @@ export async function GET(request: Request) {
 
       return {
         id: String(doc._id),
-        creditNoteNumber: doc.number || "",
+        creditNoteNumber: doc.number,
         customerId: String(doc.customerId),
         customerName:
           doc.customerSnapshot?.companyName ||
@@ -97,7 +137,7 @@ export async function GET(request: Request) {
     if (search) {
       notes = notes.filter((n) => {
         return (
-          n.creditNoteNumber.toLowerCase().includes(search) ||
+          (n.creditNoteNumber || "").toLowerCase().includes(search) ||
           n.customerName.toLowerCase().includes(search) ||
           n.referenceNumber.toLowerCase().includes(search) ||
           n.subject.toLowerCase().includes(search)
@@ -140,7 +180,6 @@ export async function GET(request: Request) {
           totalAvailable += bal;
         }
       }
-
       if (n.status === "Draft") statusCounts.draft++;
       else if (n.status === "Open") statusCounts.open++;
       else if (n.status === "Partially Applied") statusCounts.partiallyApplied++;
@@ -150,7 +189,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       creditNotes: notes,
-      customers: customersDocs.map((c) => ({
+      customers: (customersDocs as unknown as CustomerOption[]).map((c) => ({
         id: String(c._id),
         name: c.companyName ? `${c.companyName} (${c.name})` : String(c.name || ""),
       })),
@@ -170,7 +209,6 @@ export async function GET(request: Request) {
     );
   }
 }
-
 export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions).catch(() => null);
@@ -352,11 +390,27 @@ export async function POST(request: Request) {
       body.status === "Draft" || body.action === "draft" ? "Draft" : "Open";
     const balanceRemaining = targetStatus === "Draft" ? 0 : total;
 
+    const isPhysicalReturn = Boolean(body.isPhysicalReturn);
+    const goodsCondition = (body.goodsCondition as "Usable" | "Damaged" | "FinancialOnly") || (isPhysicalReturn ? "Usable" : "FinancialOnly");
+    let locType = body.stockLocationType as "Warehouse" | "Shop" | undefined;
+    let locId = body.stockLocationId && isValidObjectId(body.stockLocationId) ? new Types.ObjectId(body.stockLocationId) : undefined;
+    const invId = body.invoiceId || body.relatedDocumentId;
+    const relatedInvoiceId: Types.ObjectId | undefined = invId && isValidObjectId(invId) ? new Types.ObjectId(invId) : undefined;
+
+    if (relatedInvoiceId && (!locType || !locId)) {
+      const origInv = await SalesDocument.findOne({ _id: relatedInvoiceId, organizationId: orgObjId }).lean();
+      if (origInv) {
+        if (!locType && origInv.stockLocationType) locType = origInv.stockLocationType;
+        if (!locId && origInv.stockLocationId) locId = new Types.ObjectId(String(origInv.stockLocationId));
+      }
+    }
+
     const creditNote = new SalesDocument({
       organizationId: orgObjId,
       type: "Credit Note",
       number: creditNoteNumber,
       customerId: customer._id,
+      relatedDocumentId: relatedInvoiceId,
       customerSnapshot: {
         name: customer.name,
         companyName: customer.companyName,
@@ -370,6 +424,10 @@ export async function POST(request: Request) {
       referenceNumber: String(body.referenceNumber || "").trim(),
       issueDate: body.creditNoteDate ? new Date(body.creditNoteDate) : new Date(),
       status: targetStatus,
+      stockLocationType: locType,
+      stockLocationId: locId,
+      isPhysicalReturn,
+      goodsCondition,
       accountsReceivable: String(body.accountsReceivable || "Accounts Receivable").trim(),
       salesperson: String(body.salesperson || "").trim(),
       subject: String(body.subject || "").trim(),
@@ -424,6 +482,27 @@ export async function POST(request: Request) {
 
     if (!saved) {
       throw lastSaveError || new Error("Failed to allocate a unique credit note number.");
+    }
+
+    if (isPhysicalReturn && locType && locId) {
+      await recordCreditNoteReturn({
+        organizationId: orgObjId,
+        creditNoteId: creditNote._id,
+        creditNoteNumber: creditNote.number,
+        locationType: locType,
+        locationId: locId,
+        isPhysicalReturn: true,
+        goodsCondition,
+        items: computedItems.map((it) => ({
+          commodityId: it.itemId ? String(it.itemId) : "",
+          quantity: it.quantity,
+          rate: it.rate,
+          name: it.name,
+        })),
+        actorId: session?.user?.id ? String(session.user.id) : "system",
+      }).catch((stockErr) => {
+        console.error("Warning: Stock return failed for credit note:", stockErr);
+      });
     }
 
     // If opened immediately, update customer unused credits

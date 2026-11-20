@@ -17,6 +17,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { BillDetailView } from "./bill-detail-view";
 
 interface BillSummary {
   id: string;
@@ -95,7 +96,12 @@ function formatDate(dateStr?: string): string {
   }
 }
 
-export function BillsDirectory() {
+export function BillsDirectory({
+  initialSelectedBillId,
+}: {
+  initialSelectedBillId?: string;
+} = {}) {
+  const [selectedBillId, setSelectedBillId] = useState<string | null>(initialSelectedBillId || null);
   const [bills, setBills] = useState<BillSummary[]>([]);
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [metrics, setMetrics] = useState<Metrics>({
@@ -326,6 +332,18 @@ export function BillsDirectory() {
       setDeleting(false);
     }
   };
+
+  if (selectedBillId) {
+    return (
+      <BillDetailView
+        id={selectedBillId}
+        onClose={() => {
+          setSelectedBillId(null);
+          window.history.pushState(null, "", "/purchases/bills");
+        }}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -599,7 +617,14 @@ export function BillsDirectory() {
                   b.status !== "Draft";
 
                 return (
-                  <tr key={b.id} className="hover:bg-slate-50/80 transition">
+                  <tr
+                    key={b.id}
+                    onClick={() => {
+                      setSelectedBillId(b.id);
+                      window.history.pushState(null, "", `/purchases/bills/${b.id}`);
+                    }}
+                    className="hover:bg-slate-50/80 transition cursor-pointer"
+                  >
                     {/* Bill Date */}
                     <td className="px-6 py-4 font-mono text-slate-500 whitespace-nowrap">
                       {formatDate(b.billDate)}
@@ -607,13 +632,18 @@ export function BillsDirectory() {
 
                     {/* Bill # */}
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <Link
-                        href={`/purchases/bills/${b.id}`}
-                        className="font-semibold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedBillId(b.id);
+                          window.history.pushState(null, "", `/purchases/bills/${b.id}`);
+                        }}
+                        className="font-semibold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5 cursor-pointer text-left"
                       >
                         <FileText className="h-3.5 w-3.5 text-slate-400" />
                         <span>{b.billNumber}</span>
-                      </Link>
+                      </button>
                       {b.subject && (
                         <p className="text-[11px] text-slate-400 truncate max-w-[180px]">
                           {b.subject}
@@ -692,13 +722,18 @@ export function BillsDirectory() {
                     <td className="px-6 py-4 text-center whitespace-nowrap">
                       <div className="inline-flex items-center gap-1.5">
                         {/* View */}
-                        <Link
-                          href={`/purchases/bills/${b.id}`}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedBillId(b.id);
+                            window.history.pushState(null, "", `/purchases/bills/${b.id}`);
+                          }}
                           title="View Bill Details"
-                          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer"
                         >
                           <Eye className="h-3.5 w-3.5" />
-                        </Link>
+                        </button>
 
                         {/* Edit */}
                         <Link

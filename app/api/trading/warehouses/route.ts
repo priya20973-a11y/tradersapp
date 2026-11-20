@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { isValidObjectId, startSession } from "mongoose";
+import { getServerSession } from "next-auth";
 import { z } from "zod";
+import { authOptions } from "@/lib/auth";
 import { getTradingScope, recordTradingAudit, tradingDatabaseUnavailable } from "@/lib/trading-access";
 import { Organization, Warehouse } from "@/models";
 
@@ -28,15 +30,42 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     let organizationId = url.searchParams.get("organizationId")?.trim() || undefined;
+    const statusParam = url.searchParams.get("status")?.trim() || undefined;
+
     if (!organizationId) {
       const defaultOrg = await Organization.findOne({ status: "active" }).select("_id").lean();
       if (defaultOrg) organizationId = String(defaultOrg._id);
     }
 
     const scopeResult = await getTradingScope(organizationId, "manage-stock-lots");
-    if ("response" in scopeResult) return scopeResult.response;
+    let targetOrgId: string | undefined;
 
-    const warehouses = await Warehouse.find({ organizationId: scopeResult.scope.organizationId })
+    if (!("response" in scopeResult)) {
+      targetOrgId = scopeResult.scope.organizationId;
+    } else {
+      // Fallback: allow authenticated organization members to view warehouses
+      const session = await getServerSession(authOptions);
+      if (!session?.user) return scopeResult.response;
+      let userOrgId = session.user.organizationId;
+      if (session.user.id === "admin" && organizationId && isValidObjectId(organizationId)) {
+        userOrgId = organizationId;
+      }
+      if (!userOrgId || !isValidObjectId(userOrgId)) {
+        userOrgId = organizationId;
+      }
+      if (userOrgId && isValidObjectId(userOrgId)) {
+        targetOrgId = userOrgId;
+      } else {
+        return scopeResult.response;
+      }
+    }
+
+    const query: Record<string, unknown> = { organizationId: targetOrgId };
+    if (statusParam) {
+      query.status = statusParam;
+    }
+
+    const warehouses = await Warehouse.find(query)
       .sort({ name: 1 })
       .lean();
 
@@ -48,7 +77,7 @@ export async function GET(request: Request) {
         address: warehouse.address ?? "",
         city: warehouse.city ?? "",
         state: warehouse.state ?? "",
-        status: warehouse.status,
+        status: warehouse.status || "Active",
         locations: warehouse.locations ?? [],
       })),
     });

@@ -117,6 +117,16 @@ export function VendorCreditForm({
   const [subject, setSubject] = useState("");
   const [accountsPayable, setAccountsPayable] = useState("Accounts Payable");
 
+  // Inventory Integration
+  const [isPhysicalReturn, setIsPhysicalReturn] = useState(false);
+  const [stockLocationType, setStockLocationType] = useState<"Warehouse" | "Shop">("Warehouse");
+  const [stockLocationId, setStockLocationId] = useState("");
+  const [stockLocationName, setStockLocationName] = useState("");
+  const [purchaseBillId, setPurchaseBillId] = useState("");
+  const [purchaseBills, setPurchaseBills] = useState<Array<{ id: string; billNumber: string; vendorId: string; orderNumber?: string; stockLocationType?: string; stockLocationId?: string; stockLocationName?: string }>>([]);
+  const [warehousesList, setWarehousesList] = useState<Array<{ id: string; name: string; code: string }>>([]);
+  const [shopsList, setShopsList] = useState<Array<{ id: string; name: string; code: string }>>([]);
+
   // Items
   const [items, setItems] = useState<CreditItemRow[]>([
     {
@@ -167,11 +177,28 @@ export function VendorCreditForm({
       setLoadingInitial(true);
       setError(null);
       try {
-        const res = await fetch("/api/purchases/vendor-credits");
+        const [res, locRes, billsRes] = await Promise.all([
+          fetch("/api/purchases/vendor-credits"),
+          fetch("/api/inventory/locations"),
+          fetch("/api/purchases/bills"),
+        ]);
         if (res.ok) {
           const data = await res.json();
           setVendors(data.vendors || []);
           setItemsList(data.items || []);
+        }
+        if (locRes.ok) {
+          const locData = await locRes.json();
+          setWarehousesList(locData.warehouses || []);
+          setShopsList(locData.shops || []);
+          if (!isEditMode && locData.warehouses?.length > 0) {
+            setStockLocationId(locData.warehouses[0].id);
+            setStockLocationName(locData.warehouses[0].name);
+          }
+        }
+        if (billsRes.ok) {
+          const bData = await billsRes.json();
+          setPurchaseBills(bData.bills || []);
         }
 
         if (isEditMode && initialId) {
@@ -186,6 +213,11 @@ export function VendorCreditForm({
           if (c.vendorCreditDate) setVendorCreditDate(c.vendorCreditDate.split("T")[0]);
           setSubject(c.subject || "");
           setAccountsPayable(c.accountsPayable || "Accounts Payable");
+          if (c.isPhysicalReturn !== undefined) setIsPhysicalReturn(Boolean(c.isPhysicalReturn));
+          if (c.stockLocationType) setStockLocationType(c.stockLocationType);
+          if (c.stockLocationId) setStockLocationId(c.stockLocationId);
+          if (c.stockLocationName) setStockLocationName(c.stockLocationName);
+          if (c.purchaseBillId) setPurchaseBillId(c.purchaseBillId);
           setDiscount(c.discount || 0);
           setDiscountType(c.discountType || "percent");
           setTaxType(c.taxType || "GST");
@@ -471,6 +503,11 @@ export function VendorCreditForm({
       return;
     }
 
+    if (isPhysicalReturn && !stockLocationId) {
+      setError(`Please select a ${stockLocationType.toLowerCase()} to return stock from.`);
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {
@@ -478,6 +515,11 @@ export function VendorCreditForm({
         vendorId,
         vendorName: selectedVendor?.name || "Vendor",
         orderNumber: orderNumber.trim(),
+        purchaseBillId: purchaseBillId || undefined,
+        isPhysicalReturn,
+        stockLocationType: isPhysicalReturn ? stockLocationType : undefined,
+        stockLocationId: isPhysicalReturn ? stockLocationId : undefined,
+        stockLocationName: isPhysicalReturn ? stockLocationName : undefined,
         vendorCreditDate,
         subject: subject.trim().slice(0, 250),
         accountsPayable,
@@ -737,6 +779,117 @@ export function VendorCreditForm({
             <p className="text-[11px] text-slate-400">
               The liability account that will be credited/debited upon credit note application.
             </p>
+          </div>
+
+          {/* Linked Purchase Bill */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+              Linked Purchase Bill (Optional)
+            </label>
+            <select
+              value={purchaseBillId}
+              onChange={(e) => {
+                const bId = e.target.value;
+                setPurchaseBillId(bId);
+                const bill = purchaseBills.find((b) => b.id === bId);
+                if (bill) {
+                  if (bill.orderNumber) setOrderNumber(bill.orderNumber);
+                  if (bill.stockLocationType === "Warehouse" || bill.stockLocationType === "Shop") {
+                    setStockLocationType(bill.stockLocationType);
+                  }
+                  if (bill.stockLocationId) setStockLocationId(bill.stockLocationId);
+                  if (bill.stockLocationName) setStockLocationName(bill.stockLocationName);
+                }
+              }}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-500"
+            >
+              <option value="">-- No Linked Bill / Standalone Credit --</option>
+              {purchaseBills
+                .filter((b) => !vendorId || b.vendorId === vendorId)
+                .map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.billNumber} {b.stockLocationName ? `(${b.stockLocationName})` : ""}
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          {/* Physical Return & Stock Location */}
+          <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isPhysicalReturn}
+                onChange={(e) => setIsPhysicalReturn(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <div>
+                <span className="text-xs font-bold text-slate-800">Physical Goods Returned to Vendor</span>
+                <p className="text-[11px] text-slate-500">
+                  Enable to automatically reduce commodity stock from the selected warehouse or shop.
+                </p>
+              </div>
+            </label>
+
+            {isPhysicalReturn && (
+              <div className="space-y-2.5 pt-2 border-t border-amber-200/60 animate-in fade-in">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStockLocationType("Warehouse");
+                      if (warehousesList.length > 0) {
+                        setStockLocationId(warehousesList[0].id);
+                        setStockLocationName(warehousesList[0].name);
+                      }
+                    }}
+                    className={`rounded-lg py-1.5 text-xs font-semibold border cursor-pointer ${
+                      stockLocationType === "Warehouse" ? "bg-white text-blue-700 border-blue-500 ring-2 ring-blue-100" : "bg-white/60 text-slate-600 border-slate-200"
+                    }`}
+                  >
+                    Warehouse
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStockLocationType("Shop");
+                      if (shopsList.length > 0) {
+                        setStockLocationId(shopsList[0].id);
+                        setStockLocationName(shopsList[0].name);
+                      }
+                    }}
+                    className={`rounded-lg py-1.5 text-xs font-semibold border cursor-pointer ${
+                      stockLocationType === "Shop" ? "bg-white text-blue-700 border-blue-500 ring-2 ring-blue-100" : "bg-white/60 text-slate-600 border-slate-200"
+                    }`}
+                  >
+                    Shop
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Return From {stockLocationType} *
+                  </label>
+                  <select
+                    value={stockLocationId}
+                    onChange={(e) => {
+                      setStockLocationId(e.target.value);
+                      const list = stockLocationType === "Warehouse" ? warehousesList : shopsList;
+                      const f = list.find((x) => x.id === e.target.value);
+                      if (f) setStockLocationName(f.name);
+                    }}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-500"
+                  >
+                    <option value="">-- Select {stockLocationType} --</option>
+                    {(stockLocationType === "Warehouse" ? warehousesList : shopsList).map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name} ({l.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

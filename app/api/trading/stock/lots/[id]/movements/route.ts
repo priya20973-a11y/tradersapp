@@ -67,7 +67,7 @@ function movementTypeForAction(action: MovementInput["action"]) {
 }
 
 function matchesReplay(
-  existing: { lotId: unknown; movementType: string; quantity: number; reservationId?: string; destinationWarehouseId?: unknown; reversedMovementId?: unknown },
+  existing: { lotId?: unknown; movementType: string; quantity: number; reservationId?: string; destinationWarehouseId?: unknown; reversedMovementId?: unknown },
   lotObjectId: string,
   input: MovementInput,
 ) {

@@ -6,6 +6,7 @@ export interface PurchaseBillItemRecord {
   description?: string;
   account?: string;
   quantity: number;
+  unit?: string;
   rate: number;
   taxRate?: number;
   taxAmount?: number;
@@ -61,6 +62,9 @@ export interface PurchaseBillRecord {
   balanceDue: number;
   status: "Draft" | "Pending" | "Partially Paid" | "Paid" | "Void";
   category?: string;
+  stockLocationType?: "Warehouse" | "Shop";
+  stockLocationId?: Types.ObjectId | string;
+  stockLocationName?: string;
   items?: PurchaseBillItemRecord[];
   notes?: string;
   termsAndConditions?: string;
@@ -119,6 +123,7 @@ const PurchaseBillSchema = new Schema(
         description: { type: String, default: "" },
         account: { type: String, default: "Cost of Goods Sold" },
         quantity: { type: Number, default: 1 },
+        unit: { type: String, default: "" },
         rate: { type: Number, default: 0 },
         taxRate: { type: Number, default: 0 },
         taxAmount: { type: Number, default: 0 },
@@ -139,6 +144,9 @@ const PurchaseBillSchema = new Schema(
       },
     ],
     currency: { type: String, default: "INR" },
+    stockLocationType: { type: String, enum: ["Warehouse", "Shop"] },
+    stockLocationId: { type: Schema.Types.ObjectId },
+    stockLocationName: { type: String, trim: true },
   },
   { timestamps: true },
 );
@@ -190,6 +198,9 @@ const VendorPaymentSchema = new Schema(
       index: true,
     },
     currency: { type: String, default: "INR" },
+    stockLocationType: { type: String, enum: ["Warehouse", "Shop"] },
+    stockLocationId: { type: Schema.Types.ObjectId },
+    stockLocationName: { type: String, trim: true },
   },
   { timestamps: true },
 );

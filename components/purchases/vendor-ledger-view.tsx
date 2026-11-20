@@ -206,11 +206,15 @@ export function VendorLedgerView() {
                   onChange={(e) => setSelectedVendorId(e.target.value)}
                   className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition cursor-pointer"
                 >
-                  {vendors.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.name}
-                    </option>
-                  ))}
+                  {vendors.length === 0 ? (
+                    <option value="">No vendors found</option>
+                  ) : (
+                    vendors.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
             </div>

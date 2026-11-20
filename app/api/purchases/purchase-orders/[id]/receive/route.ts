@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { isValidObjectId } from "mongoose";
+import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { PurchaseOrder } from "@/models";
 
@@ -34,17 +37,21 @@ export async function POST(
 
     await connectToDatabase().catch(() => null);
 
-    let po = await PurchaseOrder.findById(id).catch(() => null);
-    if (!po) {
-      po = await PurchaseOrder.findOne({ purchaseOrderNumber: id }).catch(() => null);
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const query = isValidObjectId(id)
+      ? { _id: id, organizationId: orgId }
+      : { purchaseOrderNumber: id, organizationId: orgId };
+
+    const po = await PurchaseOrder.findOne(query).catch(() => null);
+
     if (!po) {
-      // Demo fallback mock receipt
-      return NextResponse.json({
-        message: "Goods receipt recorded successfully (demo mode)",
-        status: "Partially Received",
-      });
+      return NextResponse.json({ error: "Purchase Order not found" }, { status: 404 });
     }
 
     // Update item received quantities

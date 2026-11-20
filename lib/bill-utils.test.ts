@@ -132,4 +132,71 @@ describe("bill-utils", () => {
     expect(rates).toContain(18);
     expect(rates).toContain(28);
   });
+
+  it("preserves item units accurately without affecting quantity, rate, or amount calculations", () => {
+    const result = calculateBillTotals({
+      items: [
+        {
+          name: "Basmati Rice 25kg",
+          account: "Cost of Goods Sold",
+          quantity: 200,
+          unit: "bags",
+          rate: 1850,
+          taxRate: 5,
+        },
+        {
+          name: "Milling Wheat",
+          account: "Cost of Goods Sold",
+          quantity: 15.5,
+          unit: "MT",
+          rate: 26000,
+          taxRate: 0,
+        },
+        {
+          name: "Jute Packaging Bags",
+          account: "Packaging Consumables",
+          quantity: 500,
+          unit: "pcs",
+          rate: 45,
+          taxRate: 18,
+        },
+        {
+          name: "Premium Cashew Nuts",
+          account: "Cost of Goods Sold",
+          quantity: 120,
+          unit: "kg",
+          rate: 800,
+          taxRate: 5,
+        },
+      ],
+      discount: 2,
+      discountType: "percent",
+      taxType: "GST",
+      isIntraState: true,
+    });
+
+    expect(result.items[0].unit).toBe("bags");
+    expect(result.items[0].quantity).toBe(200);
+    expect(result.items[0].rate).toBe(1850);
+    expect(result.items[0].amount).toBe(370000);
+
+    expect(result.items[1].unit).toBe("MT");
+    expect(result.items[1].quantity).toBe(15.5);
+    expect(result.items[1].rate).toBe(26000);
+    expect(result.items[1].amount).toBe(403000);
+
+    expect(result.items[2].unit).toBe("pcs");
+    expect(result.items[2].quantity).toBe(500);
+    expect(result.items[2].rate).toBe(45);
+    expect(result.items[2].amount).toBe(22500);
+
+    expect(result.items[3].unit).toBe("kg");
+    expect(result.items[3].quantity).toBe(120);
+    expect(result.items[3].rate).toBe(800);
+    expect(result.items[3].amount).toBe(96000);
+
+    // subtotal = 370000 + 403000 + 22500 + 96000 = 891500
+    expect(result.subTotal).toBe(891500);
+    expect(result.discountAmount).toBe(17830);
+  });
 });

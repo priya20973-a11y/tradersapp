@@ -118,18 +118,8 @@ export function ExpenseForm({
   });
 
   // Dynamic Options
-  const [vendorsList, setVendorsList] = useState<string[]>([
-    "Mohan Traders",
-    "Shree Packaging",
-    "Metro Logistics",
-    "Kaveri Agro Industries",
-    "Apex Freight Solutions",
-  ]);
-  const [customersList, setCustomersList] = useState<string[]>([
-    "Astra Foods",
-    "City Retail",
-    "Ganga Stores",
-  ]);
+  const [vendorsList, setVendorsList] = useState<string[]>([]);
+  const [customersList, setCustomersList] = useState<string[]>([]);
 
   // Preferences Modal State
   const [showPrefModal, setShowPrefModal] = useState(false);
@@ -243,49 +233,25 @@ export function ExpenseForm({
       id: "bulk-1",
       date: new Date().toISOString().split("T")[0],
       expenseAccount: "Travel & Conveyance",
-      amount: "1200",
+      amount: "",
       paidThrough: "Petty Cash Account",
-      vendor: "Mohan Traders",
-      customerName: "Astra Foods",
-      project: "Field Trip",
-      billable: true,
-      reportingTags: "Travel",
+      vendor: "",
+      customerName: "",
+      project: "",
+      billable: false,
+      reportingTags: "",
     },
     {
       id: "bulk-2",
       date: new Date().toISOString().split("T")[0],
       expenseAccount: "Office Supplies & Stationery",
-      amount: "850",
+      amount: "",
       paidThrough: "Petty Cash Account",
-      vendor: "Shree Packaging",
+      vendor: "",
       customerName: "",
-      project: "Admin",
+      project: "",
       billable: false,
-      reportingTags: "Stationery",
-    },
-    {
-      id: "bulk-3",
-      date: new Date().toISOString().split("T")[0],
-      expenseAccount: "Meals & Entertainment",
-      amount: "1500",
-      paidThrough: "Company Corporate Card",
-      vendor: "Metro Logistics",
-      customerName: "City Retail",
-      project: "Client Dinner",
-      billable: true,
-      reportingTags: "Hospitality",
-    },
-    {
-      id: "bulk-4",
-      date: new Date().toISOString().split("T")[0],
-      expenseAccount: "Telephone & Internet Charges",
-      amount: "2100",
-      paidThrough: "HDFC Primary Bank",
-      vendor: "Apex Freight Solutions",
-      customerName: "",
-      project: "Telecom",
-      billable: false,
-      reportingTags: "Utilities",
+      reportingTags: "",
     },
   ]);
 
@@ -314,9 +280,11 @@ export function ExpenseForm({
     fetch("/api/vendors")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!mounted || !data?.vendors?.length) return;
-        const names = data.vendors.map((v: { displayName?: string; name?: string }) => v.displayName || v.name).filter(Boolean);
-        if (names.length) setVendorsList(names);
+        if (!mounted) return;
+        const names = Array.isArray(data?.vendors)
+          ? data.vendors.map((v: { displayName?: string; name?: string }) => v.displayName || v.name).filter(Boolean)
+          : [];
+        setVendorsList(names);
       })
       .catch(() => {});
 
@@ -324,9 +292,11 @@ export function ExpenseForm({
     fetch("/api/sales?section=customers")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!mounted || !data?.customers?.length) return;
-        const names = data.customers.map((c: { name?: string }) => c.name).filter(Boolean);
-        if (names.length) setCustomersList(names);
+        if (!mounted) return;
+        const names = Array.isArray(data?.customers)
+          ? data.customers.map((c: { name?: string }) => c.name).filter(Boolean)
+          : [];
+        setCustomersList(names);
       })
       .catch(() => {});
 

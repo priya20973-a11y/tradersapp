@@ -108,6 +108,11 @@ export const createSchema = z.discriminatedUnion("type", [
     tdsTcsRate: z.coerce.number().min(0).optional(),
     tdsTcsAmount: z.coerce.number().optional(),
     adjustment: z.coerce.number().optional(),
+    stockLocationType: z.enum(["Warehouse", "Shop"]).optional(),
+    stockLocationId: z.string().optional(),
+    stockLocationName: z.string().optional(),
+    isPhysicalReturn: z.boolean().optional(),
+    goodsCondition: z.enum(["Usable", "Damaged", "FinancialOnly"]).optional(),
     items: z
       .array(
         z.object({

@@ -54,7 +54,8 @@ export const bulkExpenseInputSchema = z.object({
   expenses: z.array(expenseInputSchema).min(1, "At least one expense is required in bulk submission"),
 });
 
-export const defaultDemoExpenses = [
+export const defaultDemoExpenses: Array<Record<string, unknown>> = [];
+const _deprecatedDemoExpenses = [
   {
     id: "EXP-2026-081",
     referenceNumber: "EXP-2026-081",
@@ -223,10 +224,10 @@ export async function GET(request: Request) {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase().catch(() => null);
 
-    let orgId = session?.user?.organizationId;
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean().catch(() => null);
-      if (defaultOrg) orgId = String(defaultOrg._id);
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);
@@ -234,32 +235,11 @@ export async function GET(request: Request) {
     const type = searchParams.get("type");
     const status = searchParams.get("status");
 
-    const query: Record<string, unknown> = {};
-    if (orgId) query.organizationId = orgId;
+    const query: Record<string, unknown> = { organizationId: orgId };
     if (type && type !== "all") query.expenseType = type;
     if (status && status !== "ALL") query.status = status;
 
     const dbExpenses = await Expense.find(query).sort({ date: -1, createdAt: -1 }).lean().catch(() => []);
-
-    if (!dbExpenses || dbExpenses.length === 0) {
-      // Filter demo fallback expenses
-      let filtered = [...defaultDemoExpenses];
-      if (type && type !== "all") {
-        filtered = filtered.filter((e) => e.expenseType === type);
-      }
-      if (status && status !== "ALL") {
-        filtered = filtered.filter((e) => e.status.toLowerCase() === status.toLowerCase());
-      }
-      if (search) {
-        filtered = filtered.filter((e) =>
-          [e.vendor, e.customerName, e.notes, e.referenceNumber, e.items?.[0]?.expenseAccount]
-            .filter(Boolean)
-            .some((val) => String(val).toLowerCase().includes(search)),
-        );
-      }
-
-      return NextResponse.json({ expenses: filtered });
-    }
 
     let results = dbExpenses.map((exp: Record<string, unknown>) => ({
       id: String(exp._id),
@@ -310,13 +290,10 @@ export async function POST(request: Request) {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase();
 
-    let orgId = session?.user?.organizationId;
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean();
-      if (!defaultOrg) {
-        return NextResponse.json({ error: "No active organization found" }, { status: 400 });
-      }
-      orgId = String(defaultOrg._id);
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     // Check if bulk submission

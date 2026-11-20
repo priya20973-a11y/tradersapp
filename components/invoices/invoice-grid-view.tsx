@@ -13,6 +13,7 @@ import { type InvoiceRecord } from "./invoice-types";
 
 interface InvoiceGridViewProps {
   invoices: InvoiceRecord[];
+  onSelectInvoice?: (id: string) => void;
   onRecordPayment: (invoice: InvoiceRecord) => void;
   onSendEmail: (invoice: InvoiceRecord) => void;
   onDownloadPdf: (invoice: InvoiceRecord) => void;
@@ -20,6 +21,7 @@ interface InvoiceGridViewProps {
 
 export function InvoiceGridView({
   invoices,
+  onSelectInvoice,
   onRecordPayment,
   onSendEmail,
   onDownloadPdf,
@@ -77,13 +79,20 @@ export function InvoiceGridView({
         return (
           <div
             key={inv.id}
-            className="group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs transition hover:border-slate-300 hover:shadow-md"
+            onClick={() => onSelectInvoice?.(inv.id)}
+            className="group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs transition hover:border-slate-300 hover:shadow-md cursor-pointer"
           >
             <div>
               {/* Card Header */}
               <div className="flex items-center justify-between">
                 <Link
                   href={`/sales/invoices/${inv.id}`}
+                  onClick={(e) => {
+                    if (onSelectInvoice) {
+                      e.preventDefault();
+                      onSelectInvoice(inv.id);
+                    }
+                  }}
                   className="font-mono text-sm font-bold text-blue-600 hover:underline"
                 >
                   {inv.number}
@@ -172,13 +181,26 @@ export function InvoiceGridView({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-1.5">
-                <Link
-                  href={`/sales/invoices/${inv.id}`}
-                  className="flex-1 text-center rounded-xl border border-slate-200 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                >
-                  View Details
-                </Link>
+              <div
+                className="flex items-center justify-between gap-1.5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {onSelectInvoice ? (
+                  <button
+                    type="button"
+                    onClick={() => onSelectInvoice(inv.id)}
+                    className="flex-1 text-center rounded-xl border border-slate-200 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    View Details
+                  </button>
+                ) : (
+                  <Link
+                    href={`/sales/invoices/${inv.id}`}
+                    className="flex-1 text-center rounded-xl border border-slate-200 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    View Details
+                  </Link>
+                )}
 
                 {inv.balanceDue > 0 && inv.status !== "Void" && (
                   <button

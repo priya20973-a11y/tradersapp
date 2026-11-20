@@ -89,6 +89,14 @@ export interface PaymentRecordData {
   createdAt?: string;
 }
 
+export interface InvoiceAttachmentData {
+  name: string;
+  size: number;
+  type: string;
+  dataUrl?: string;
+  uploadedAt?: string;
+}
+
 export interface InvoiceRecord {
   id: string;
   number: string;
@@ -102,6 +110,7 @@ export interface InvoiceRecord {
   paymentTerms: string;
   salesperson?: string;
   subject?: string;
+  orderNumber?: string;
   referenceNumber?: string;
   customerNotes?: string;
   termsAndConditions?: string;
@@ -110,6 +119,7 @@ export interface InvoiceRecord {
   subTotal: number;
   discount: number;
   discountType: "percent" | "amount";
+  discountAmount?: number;
   taxRate?: number;
   taxAmount: number;
   cgst: number;
@@ -119,12 +129,17 @@ export interface InvoiceRecord {
   adjustment: number;
   roundOff: number;
   total: number;
+  stockLocationType?: "Warehouse" | "Shop";
+  stockLocationId?: string;
+  stockLocationName?: string;
+  relatedDocumentId?: string;
   amountPaid: number;
   creditedAmount: number;
   balanceDue: number;
   items?: InvoiceItemData[];
   itemsCount?: number;
   bankDetailsSnapshot?: BankDetailsData;
+  attachments?: InvoiceAttachmentData[];
   emailsSent?: EmailLogData[];
   emailsSentCount?: number;
   payments?: PaymentRecordData[];

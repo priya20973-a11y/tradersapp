@@ -134,9 +134,24 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        const organization = await Organization.findOne({ _id: user.organizationId, status: "active" }).select("_id");
+        if (!user.organizationId) {
+          logger.warn({ email }, "Login denied: user has no organization");
+          return null;
+        }
+
+        const organization = await Organization.findById(user.organizationId).select("_id status");
         if (!organization) {
-          logger.warn({ email, organizationId: user.organizationId }, "Login denied: organization inactive or not found");
+          logger.warn({ email, organizationId: user.organizationId }, "Login denied: organization not found");
+          return null;
+        }
+
+        if (organization.status !== "active") {
+          logger.warn(
+            { email, organizationId: user.organizationId, status: organization.status },
+            organization.status === "pending"
+              ? "Login denied: organization pending approval"
+              : `Login denied: organization is ${organization.status}`,
+          );
           return null;
         }
 

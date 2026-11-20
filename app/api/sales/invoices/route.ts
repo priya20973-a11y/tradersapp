@@ -11,8 +11,11 @@ import {
   Organization,
   PaymentTerm,
   SalesDocument,
+  StockLocation,
   User,
+  Warehouse,
 } from "@/models";
+import { recordInvoiceStockOut } from "@/lib/inventory-service";
 import {
   calculateInvoiceTotals,
   type CalculateItemInput,
@@ -33,11 +36,20 @@ import {
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
-    const requestedOrganizationId = url.searchParams.get("organizationId") ?? undefined;
+    let requestedOrganizationId = url.searchParams.get("organizationId") ?? undefined;
     const session = await getServerSession(authOptions);
     if (!session?.user) return respondError("Sign in to access invoices.", 401);
 
     await connectToDatabase();
+    if (session.user.id === "admin" && !requestedOrganizationId) {
+      const defaultOrg =
+        (await Organization.findOne({ status: "active" }).select("_id").lean().catch(() => null)) ||
+        (await Organization.findOne().select("_id").lean().catch(() => null));
+      if (defaultOrg) {
+        requestedOrganizationId = String(defaultOrg._id);
+      }
+    }
+
     if (session.user.id === "admin" && !requestedOrganizationId) {
       const organizations = await Organization.find({ status: "active" })
         .select("_id name")
@@ -93,8 +105,13 @@ export async function GET(request: Request) {
 
     const [invoicesRaw, customers, settingsDoc, org, userDoc] = await Promise.all([
       SalesDocument.find(query).sort({ issueDate: -1, createdAt: -1 }).lean(),
-      Customer.find({ organizationId })
-        .select("_id name companyName email phone gstin state paymentTerms billingAddress shippingAddress")
+      Customer.find({
+        $or: [
+          { organizationId },
+          ...(isValidObjectId(organizationId) ? [{ organizationId: new Types.ObjectId(organizationId) }] : []),
+        ],
+      })
+        .select("_id name displayName companyName email phone gstin state paymentTerms billingAddress shippingAddress")
         .sort({ name: 1 })
         .lean(),
       InvoiceSettings.findOne({ organizationId }).lean(),
@@ -316,7 +333,14 @@ export async function POST(request: Request) {
       return respondError("Select a valid customer.", 400);
     }
 
-    const customer = await Customer.findOne({ _id: customerId, organizationId }).lean();
+    const customer =
+      (await Customer.findOne({
+        _id: new Types.ObjectId(customerId),
+        $or: [
+          { organizationId },
+          ...(isValidObjectId(organizationId) ? [{ organizationId: new Types.ObjectId(organizationId) }] : []),
+        ],
+      }).lean()) || (await Customer.findById(customerId).lean());
     if (!customer) {
       return respondError("Customer not found in this organization.", 404);
     }
@@ -489,6 +513,58 @@ export async function POST(request: Request) {
       dueDate = new Date(dateStr);
     }
 
+    // Stock Location Resolution
+    const salesOrderIdParam = (payload.salesOrderId || payload.relatedDocumentId) as string | undefined;
+    let linkedSO: unknown = null;
+    let finalLocationType: "Warehouse" | "Shop" | undefined;
+    let finalLocationId: Types.ObjectId | undefined;
+    let finalLocationName = "";
+
+    if (salesOrderIdParam && isValidObjectId(salesOrderIdParam)) {
+      const foundSO = await SalesDocument.findOne({
+        _id: new Types.ObjectId(salesOrderIdParam),
+        organizationId: new Types.ObjectId(organizationId),
+        type: "Sales Order",
+      }).lean();
+
+      if (foundSO) {
+        linkedSO = foundSO;
+        // Automatically fetch original location. Do not allow changing the location!
+        finalLocationType = (foundSO.stockLocationType as "Warehouse" | "Shop") || "Warehouse";
+        finalLocationId = foundSO.stockLocationId ? new Types.ObjectId(String(foundSO.stockLocationId)) : undefined;
+        finalLocationName = foundSO.stockLocationName || "";
+      }
+    }
+
+    if (!finalLocationId) {
+      if (payload.stockLocationType === "Warehouse" || payload.stockLocationType === "Shop") {
+        finalLocationType = payload.stockLocationType;
+      }
+      if (payload.stockLocationId && isValidObjectId(String(payload.stockLocationId))) {
+        finalLocationId = new Types.ObjectId(String(payload.stockLocationId));
+      }
+      if (payload.stockLocationName) {
+        finalLocationName = String(payload.stockLocationName);
+      }
+    }
+
+    if (!finalLocationId) {
+      // Default fallback if not supplied (for backward compatibility)
+      const defaultWh = await Warehouse.findOne({ organizationId: new Types.ObjectId(organizationId), status: "Active" }).select("_id name").lean();
+      if (defaultWh) {
+        finalLocationType = "Warehouse";
+        finalLocationId = new Types.ObjectId(String(defaultWh._id));
+        finalLocationName = String(defaultWh.name || "Main Warehouse");
+      } else {
+        const defaultShop = await StockLocation.findOne({ organizationId: new Types.ObjectId(organizationId), locationType: "Shop" }).select("_id name").lean();
+        if (defaultShop) {
+          finalLocationType = "Shop";
+          finalLocationId = new Types.ObjectId(String(defaultShop._id));
+          finalLocationName = String(defaultShop.name || "Main Shop");
+        }
+      }
+    }
+
     const initialStatus = payload.status === "Sent" ? "Sent" : "Draft";
 
     const newInvoice = (await SalesDocument.create({
@@ -496,9 +572,13 @@ export async function POST(request: Request) {
       type: "Invoice",
       number: invoiceNumber,
       customerId: new Types.ObjectId(String(customer._id)),
+      relatedDocumentId: linkedSO ? (linkedSO as { _id: Types.ObjectId })._id : undefined,
       status: initialStatus,
       issueDate,
       dueDate,
+      stockLocationType: finalLocationType,
+      stockLocationId: finalLocationId,
+      stockLocationName: finalLocationName,
       paymentTerms: String(payload.paymentTerms ?? settings?.defaultPaymentTerms ?? "Due on Receipt"),
       salesperson: String(payload.salesperson ?? "").trim(),
       subject: String(payload.subject ?? "").trim(),
@@ -526,6 +606,27 @@ export async function POST(request: Request) {
       items: itemsSnapshot,
       emailsSent: [],
     })) as unknown as { _id: Types.ObjectId; number?: string; total?: number; status?: string };
+
+    // Record stock out
+    if (finalLocationType && finalLocationId && itemsSnapshot.length > 0) {
+      await recordInvoiceStockOut({
+        organizationId,
+        invoiceId: newInvoice._id,
+        invoiceNumber,
+        salesOrderId: linkedSO ? (linkedSO as { _id: Types.ObjectId })._id : undefined,
+        locationType: finalLocationType,
+        locationId: finalLocationId,
+        items: itemsSnapshot.map((it) => ({
+          commodityId: it.itemId ? String(it.itemId) : "",
+          quantity: it.quantity,
+          rate: it.rate,
+          name: it.name,
+        })),
+        actorId: String(session.user.id),
+      }).catch((stockErr) => {
+        console.error("Warning: Stock-out failed for invoice:", stockErr);
+      });
+    }
 
     // Record Audit Event
     await AuditEvent.create({

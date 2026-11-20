@@ -136,10 +136,16 @@ export function SalesOrderTableView({
                       <button
                         type="button"
                         onClick={() => onQuickView(order)}
-                        className="font-mono text-sm font-bold text-blue-600 hover:text-blue-800 hover:underline transition cursor-pointer text-left"
+                        className="font-mono text-sm font-bold text-blue-600 hover:text-blue-800 hover:underline transition cursor-pointer text-left block"
                       >
                         {order.number}
                       </button>
+                      {order.stockLocationName && (
+                        <span className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                          <span>{order.stockLocationType === "Shop" ? "🏪" : "🏢"}</span>
+                          <span className="truncate max-w-[130px]">{order.stockLocationName}</span>
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-4">
                       <div className="flex items-center gap-2.5">

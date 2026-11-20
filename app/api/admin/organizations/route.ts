@@ -1,31 +1,56 @@
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { isValidObjectId, startSession, Types } from "mongoose";
+import { isValidObjectId, Types } from "mongoose";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requirePermission } from "@/lib/auth";
 import { AppError } from "@/lib/errors";
-import { connectToDatabase } from "@/lib/db";
+import { connectToDatabase, withTransaction } from "@/lib/db";
 import {
   AuditEvent,
   BankAccount,
+  BuyerProfile,
+  BuyingRequest,
   ChartOfAccount,
+  CreditNoteSettings,
+  CustomReport,
   Customer,
+  DeliveryChallanSettings,
   DocumentSequence,
+  Expense,
   Invoice,
+  InvoiceSettings,
   Item,
+  ItemPreference,
   JournalEntry,
+  MileagePreference,
   Organization,
   Payment,
+  PaymentTerm,
+  PurchaseBill,
+  PurchaseOrder,
+  PurchaseOrderPreferences,
+  RecurringBill,
+  RecurringExpense,
+  RequestOffer,
   SalesDocument,
+  SavedBuyer,
+  StockAdjustment,
+  StockLevel,
+  StockLocation,
   StockLot,
   StockMovement,
+  StockReservation,
+  StockTransfer,
   TaxRate,
   TradeDeal,
   TraderPayment,
   TraderProfile,
+  Unit,
   User,
   Vendor,
+  VendorCredit,
+  VendorPayment,
   Warehouse,
 } from "@/models";
 
@@ -37,7 +62,7 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("set-status"),
     organizationId: z.string().refine(isValidObjectId),
-    status: z.enum(["active", "inactive"]),
+    status: z.enum(["active", "inactive", "rejected"]),
   }),
   z.object({
     action: z.literal("reset-password"),
@@ -246,27 +271,6 @@ const deleteSchema = z.object({
   confirmationName: z.string().trim().min(2).max(120),
 });
 
-const organizationModels = [
-  AuditEvent,
-  BankAccount,
-  ChartOfAccount,
-  Customer,
-  DocumentSequence,
-  Invoice,
-  Item,
-  JournalEntry,
-  Payment,
-  SalesDocument,
-  StockLot,
-  StockMovement,
-  TaxRate,
-  TradeDeal,
-  TraderPayment,
-  TraderProfile,
-  Vendor,
-  Warehouse,
-];
-
 export async function DELETE(request: Request) {
   const denied = await requireAdmin(request);
   if (denied) return denied;
@@ -285,24 +289,89 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "The organization name did not match. Nothing was deleted." }, { status: 400 });
     }
 
-    const session = await startSession();
-    try {
-      await session.withTransaction(async () => {
-        const organizationId = new Types.ObjectId(parsed.data.organizationId);
-        for (const model of organizationModels) {
-          await model.collection.deleteMany({ organizationId }, { session });
-        }
-        await User.deleteMany({ organizationId }).session(session);
-        const result = await Organization.deleteOne({ _id: organizationId }).session(session);
-        if (result.deletedCount !== 1) throw new Error("Organization changed while deletion was in progress.");
-      });
-    } finally {
-      await session.endSession();
+    const authUser = await requirePermission("all", request ? { req: request } : undefined).catch(() => null);
+    if (authUser?.organizationId && String(authUser.organizationId) === String(organization._id)) {
+      return NextResponse.json(
+        { error: "Cannot delete the organization you are currently signed into. Switch organizations or sign in as Super Admin first." },
+        { status: 400 },
+      );
     }
+
+    const organizationId = new Types.ObjectId(parsed.data.organizationId);
+    const orgFilter = {
+      $or: [
+        { organizationId },
+        { organizationId: parsed.data.organizationId },
+      ],
+    };
+
+    await withTransaction(async (session) => {
+      const opts = session ? { session } : {};
+      const deleteOperations = [
+        () => AuditEvent.deleteMany(orgFilter, opts),
+        () => BankAccount.deleteMany(orgFilter, opts),
+        () => BuyerProfile.deleteMany(orgFilter, opts),
+        () => BuyingRequest.deleteMany(orgFilter, opts),
+        () => ChartOfAccount.deleteMany(orgFilter, opts),
+        () => CreditNoteSettings.deleteMany(orgFilter, opts),
+        () => CustomReport.deleteMany(orgFilter, opts),
+        () => Customer.deleteMany(orgFilter, opts),
+        () => DeliveryChallanSettings.deleteMany(orgFilter, opts),
+        () => DocumentSequence.deleteMany(orgFilter, opts),
+        () => Expense.deleteMany(orgFilter, opts),
+        () => Invoice.deleteMany(orgFilter, opts),
+        () => InvoiceSettings.deleteMany(orgFilter, opts),
+        () => Item.deleteMany(orgFilter, opts),
+        () => ItemPreference.deleteMany(orgFilter, opts),
+        () => JournalEntry.deleteMany(orgFilter, opts),
+        () => MileagePreference.deleteMany(orgFilter, opts),
+        () => Payment.deleteMany(orgFilter, opts),
+        () => PaymentTerm.deleteMany(orgFilter, opts),
+        () => PurchaseBill.deleteMany(orgFilter, opts),
+        () => PurchaseOrder.deleteMany(orgFilter, opts),
+        () => PurchaseOrderPreferences.deleteMany(orgFilter, opts),
+        () => RecurringBill.deleteMany(orgFilter, opts),
+        () => RecurringExpense.deleteMany(orgFilter, opts),
+        () => RequestOffer.deleteMany(orgFilter, opts),
+        () => SalesDocument.deleteMany(orgFilter, opts),
+        () => SavedBuyer.deleteMany(orgFilter, opts),
+        () => StockAdjustment.deleteMany(orgFilter, opts),
+        () => StockLevel.deleteMany(orgFilter, opts),
+        () => StockLocation.deleteMany(orgFilter, opts),
+        () => StockLot.deleteMany(orgFilter, opts),
+        () => StockMovement.deleteMany(orgFilter, opts),
+        () => StockReservation.deleteMany(orgFilter, opts),
+        () => StockTransfer.deleteMany(orgFilter, opts),
+        () => TaxRate.deleteMany(orgFilter, opts),
+        () => TradeDeal.deleteMany(orgFilter, opts),
+        () => TraderPayment.deleteMany(orgFilter, opts),
+        () => TraderProfile.deleteMany(orgFilter, opts),
+        () => Unit.deleteMany(orgFilter, opts),
+        () => Vendor.deleteMany(orgFilter, opts),
+        () => VendorCredit.deleteMany(orgFilter, opts),
+        () => VendorPayment.deleteMany(orgFilter, opts),
+        () => Warehouse.deleteMany(orgFilter, opts),
+      ];
+      for (const deleteOperation of deleteOperations) {
+        await deleteOperation();
+      }
+      await User.deleteMany({ ...orgFilter, id: { $ne: "admin" } }, opts);
+      const result = await Organization.deleteOne({ _id: organizationId }, opts);
+      if (result.deletedCount !== 1) {
+        throw new Error("Organization changed while deletion was in progress.");
+      }
+    });
 
     return NextResponse.json({ ok: true, message: `${organization.name} and its organization data were deleted.` });
   } catch (error) {
     console.error("Admin organization deletion failed.", error);
-    return NextResponse.json({ error: "Unable to delete this organization. No partial deletion was committed." }, { status: 503 });
+    if (error instanceof AppError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Unable to delete this organization. No partial deletion was committed.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

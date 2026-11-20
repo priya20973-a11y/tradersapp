@@ -3,8 +3,11 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import { Customer, DocumentSequence, Item, PurchaseBill, Vendor, type PurchaseBillRecord, type PurchaseBillAttachment } from "@/models";
+import { Customer, DocumentSequence, Item, Organization, PurchaseBill, Vendor, type PurchaseBillRecord, type PurchaseBillAttachment } from "@/models";
 import { calculateBillTotals, calculateDueDate } from "@/lib/bill-utils";
+import { recordPurchaseInward } from "@/lib/inventory-service";
+import { StockLocation, Warehouse } from "@/models";
+import { escapeRegex } from "@/lib/bill-numbering";
 
 interface BillPayload {
   organizationId?: string;
@@ -26,6 +29,9 @@ interface BillPayload {
   notes?: string;
   termsAndConditions?: string;
   attachments?: PurchaseBillAttachment[];
+  stockLocationType?: "Warehouse" | "Shop";
+  stockLocationId?: string;
+  stockLocationName?: string;
   status?: "Draft" | "Pending" | "Partially Paid" | "Paid" | "Void";
 }
 
@@ -57,6 +63,9 @@ interface BillDetailRow {
   creditsApplied: unknown[];
   balanceDue: number;
   status: "Draft" | "Pending" | "Partially Paid" | "Paid" | "Void";
+  stockLocationType?: string;
+  stockLocationId?: string;
+  stockLocationName?: string;
   items: unknown[];
   notes: string;
   termsAndConditions: string;
@@ -66,6 +75,46 @@ interface BillDetailRow {
 
 function respondError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
+}
+
+function matchesBillSubmission(
+  existing: PurchaseBillRecord,
+  submitted: {
+    vendorId: Types.ObjectId;
+    billDate: Date;
+    orderNumber: string;
+    stockLocationType?: "Warehouse" | "Shop";
+    stockLocationId?: Types.ObjectId;
+    items: Array<Record<string, unknown>>;
+    total: number;
+    status: "Draft" | "Pending";
+  },
+) {
+  const normalizeItems = (billItems: Array<Record<string, unknown>> = []) =>
+    billItems.map((item) => ({
+      itemId: item.itemId ? String(item.itemId) : "",
+      name: String(item.name || ""),
+      description: String(item.description || ""),
+      account: String(item.account || "Cost of Goods Sold"),
+      quantity: Number(item.quantity || 0),
+      unit: String(item.unit || ""),
+      rate: Number(item.rate || 0),
+      taxRate: Number(item.taxRate || 0),
+      customerId: item.customerId ? String(item.customerId) : "",
+      customerName: String(item.customerName || ""),
+    }));
+
+  return (
+    String(existing.vendorId) === String(submitted.vendorId) &&
+    new Date(existing.billDate).getTime() === submitted.billDate.getTime() &&
+    String(existing.orderNumber || "") === submitted.orderNumber &&
+    existing.stockLocationType === submitted.stockLocationType &&
+    String(existing.stockLocationId || "") === String(submitted.stockLocationId || "") &&
+    Number(existing.total) === submitted.total &&
+    existing.status === submitted.status &&
+    JSON.stringify(normalizeItems(existing.items as unknown as Array<Record<string, unknown>>)) ===
+      JSON.stringify(normalizeItems(submitted.items))
+  );
 }
 
 export async function GET(request: Request) {
@@ -97,6 +146,13 @@ export async function GET(request: Request) {
       isDbConnected = false;
     }
 
+    if (isDbConnected && (!organizationId || !isValidObjectId(organizationId))) {
+      const defaultOrg =
+        (await Organization.findOne({ status: "active" }).select("_id").lean().catch(() => null)) ||
+        (await Organization.findOne().select("_id").lean().catch(() => null));
+      if (defaultOrg) organizationId = String(defaultOrg._id);
+    }
+
     let bills: BillDetailRow[] = [];
     let vendors: Array<{ id: string; name: string; email: string; phone: string; gstin: string; state: string }> = [];
     let items: Array<{ id: string; name: string; sku?: string; rate: number; account: string; unit: string }> = [];
@@ -105,29 +161,54 @@ export async function GET(request: Request) {
     if (isDbConnected && organizationId && isValidObjectId(organizationId)) {
       const orgObjId = new Types.ObjectId(organizationId);
 
-      const [vendorsDb, itemsDb, customersDb, billsDb] = await Promise.all([
-        Vendor.find({ organizationId: orgObjId }).select("_id name email phone gstin state").sort({ name: 1 }).lean(),
+      const [vendorsDbRaw, itemsDb, customersDb, billsDb] = await Promise.all([
+        Vendor.find({
+          $or: [{ organizationId: orgObjId }, { organizationId: String(orgObjId) }],
+        })
+          .select("_id name displayName companyName email phone workPhone gstin state billingAddress")
+          .sort({ name: 1 })
+          .lean()
+          .catch(() => []),
         Item.find({ organizationId: orgObjId, active: true }).select("_id name sku purchasePrice purchaseAccount unit").lean(),
         Customer.find({ organizationId: orgObjId }).select("_id name companyName").sort({ name: 1 }).lean(),
         PurchaseBill.find({ organizationId: orgObjId }).sort({ billDate: -1, createdAt: -1 }).lean(),
       ]);
 
-      vendors = vendorsDb.map((v) => ({
+      let vendorsDb = vendorsDbRaw;
+      if (vendorsDb.length === 0) {
+        vendorsDb = await Vendor.find()
+          .select("_id name displayName companyName email phone workPhone gstin state billingAddress")
+          .sort({ name: 1 })
+          .limit(100)
+          .lean()
+          .catch(() => []);
+      }
+
+      vendors = vendorsDb.map((v: Record<string, unknown>) => ({
         id: String(v._id),
-        name: String(v.name || ""),
+        name: String(v.displayName || v.name || v.companyName || "Vendor"),
         email: String(v.email || ""),
-        phone: String(v.phone || ""),
+        phone: String(v.workPhone || v.phone || ""),
         gstin: String(v.gstin || ""),
-        state: String(v.state || ""),
+        state: String(v.state || (v.billingAddress as { state?: string })?.state || ""),
       }));
 
-      items = itemsDb.map((it) => ({
+      let itemsDbList = itemsDb;
+      if (itemsDbList.length === 0) {
+        itemsDbList = await Item.find({ active: true })
+          .select("_id name sku purchasePrice purchaseAccount unit")
+          .limit(100)
+          .lean()
+          .catch(() => []);
+      }
+
+      items = itemsDbList.map((it) => ({
         id: String(it._id),
         name: String(it.name || ""),
         sku: it.sku ? String(it.sku) : undefined,
         rate: Number(it.purchasePrice || 0),
         account: String(it.purchaseAccount || "Cost of Goods Sold"),
-        unit: String(it.unit || "unit"),
+        unit: String(it.unit || ""),
       }));
 
       customers = customersDb.map((c) => ({
@@ -169,6 +250,9 @@ export async function GET(request: Request) {
           creditsApplied: (b.creditsApplied as unknown[]) || [],
           balanceDue,
           status: (b.status as "Draft" | "Pending" | "Partially Paid" | "Paid" | "Void") || "Pending",
+          stockLocationType: b.stockLocationType ? String(b.stockLocationType) : "",
+          stockLocationId: b.stockLocationId ? String(b.stockLocationId) : "",
+          stockLocationName: b.stockLocationName ? String(b.stockLocationName) : "",
           items: (b.items as unknown[]) || [],
           notes: String(b.notes || ""),
           termsAndConditions: String(b.termsAndConditions || ""),
@@ -314,6 +398,9 @@ export async function POST(request: Request) {
       notes,
       termsAndConditions,
       attachments,
+      stockLocationType,
+      stockLocationId,
+      stockLocationName,
       status: requestedStatus,
       organizationId: customOrgId,
     } = payload;
@@ -332,6 +419,13 @@ export async function POST(request: Request) {
     }
 
     if (!organizationId || !isValidObjectId(organizationId)) {
+      const defaultOrg =
+        (await Organization.findOne({ status: "active" }).select("_id").lean().catch(() => null)) ||
+        (await Organization.findOne().select("_id").lean().catch(() => null));
+      if (defaultOrg) organizationId = String(defaultOrg._id);
+    }
+
+    if (!organizationId || !isValidObjectId(organizationId)) {
       return respondError("Organization ID is required.", 400);
     }
 
@@ -343,32 +437,37 @@ export async function POST(request: Request) {
     let vendorName = "Vendor";
     if (isValidObjectId(vendorId)) {
       vendorObjId = new Types.ObjectId(vendorId);
-      const vend = await Vendor.findOne({ _id: vendorObjId, organizationId: orgObjId }).select("name");
-      if (vend && vend.name) vendorName = String(vend.name);
+      const vend =
+        (await Vendor.findOne({
+          _id: vendorObjId,
+          $or: [{ organizationId: orgObjId }, { organizationId: String(orgObjId) }],
+        })
+          .select("name displayName companyName")
+          .lean()) ||
+        (await Vendor.findById(vendorObjId).select("name displayName companyName").lean());
+      if (vend) {
+        const vRec = vend as Record<string, unknown>;
+        vendorName = String(vRec.displayName || vRec.name || vRec.companyName || "Vendor");
+      }
     } else {
       vendorObjId = new Types.ObjectId();
       if (payload.vendorName) vendorName = String(payload.vendorName);
     }
 
-    // Allocate or validate bill number
-    let billNumber = (customBillNumber || "").trim();
+    // Validate bill number
+    const billNumber = (customBillNumber || "").trim();
     if (!billNumber) {
-      const sequence = await DocumentSequence.findOneAndUpdate(
-        { organizationId: orgObjId, modelName: "Purchase Bill" },
-        { $inc: { nextNumber: 1 } },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      );
-      const bSeq = sequence?.nextNumber || 1;
-      billNumber = `BILL-${String(bSeq).padStart(4, "0")}`;
-    } else {
-      // Check for duplicate bill number
-      const existing = await PurchaseBill.findOne({
-        organizationId: orgObjId,
-        billNumber: { $regex: new RegExp(`^${billNumber}$`, "i") },
-      });
-      if (existing) {
-        return respondError(`Bill number "${billNumber}" already exists in your organization.`, 409);
-      }
+      return respondError("Bill number is required.", 400);
+    }
+
+    let existingBillCandidate: (PurchaseBillRecord & { _id: Types.ObjectId }) | null = null;
+    const existing = await PurchaseBill.findOne({
+      $or: [{ organizationId: orgObjId }, { organizationId: String(orgObjId) }],
+      billNumber: { $regex: new RegExp(`^${escapeRegex(billNumber)}$`, "i") },
+    });
+
+    if (existing) {
+      existingBillCandidate = existing as unknown as PurchaseBillRecord & { _id: Types.ObjectId };
     }
 
     // Calculate due date
@@ -384,20 +483,45 @@ export async function POST(request: Request) {
       finalDueDate = calcStr ? new Date(calcStr) : finalBillDate;
     }
 
+    // Pre-fetch units from Item master if not supplied in payload
+    const submittedItems = items as Array<Record<string, unknown>>;
+    const needUnitIds = submittedItems
+      .filter((it) => !it.unit && it.itemId && isValidObjectId(String(it.itemId)))
+      .map((it) => new Types.ObjectId(String(it.itemId)));
+    const itemMasterUnitMap = new Map<string, string>();
+    if (typeof Item !== "undefined" && typeof Item.find === "function" && needUnitIds.length > 0) {
+      const foundItems = await Item.find({ _id: { $in: needUnitIds } })
+        .select("_id unit")
+        .lean()
+        .catch(() => []);
+      for (const fi of foundItems) {
+        if (fi.unit) itemMasterUnitMap.set(String(fi._id), String(fi.unit));
+      }
+    }
+
     // Calculate totals on backend
     const calcOutput = calculateBillTotals({
-      items: (items as Array<Record<string, unknown>>).map((it) => ({
-        itemId: it.itemId as string | undefined,
-        name: (String(it.name || "")).trim() || "Item",
-        description: (String(it.description || "")).trim(),
-        account: (it.account as string) || "Cost of Goods Sold",
-        quantity: Math.max(0, Number(it.quantity) || 1),
-        rate: Math.max(0, Number(it.rate) || 0),
-        taxRate: Number(it.taxRate) || 0,
-        customerId: it.customerId as string | undefined,
-        customerName: (it.customerName as string) || "",
-        amount: Math.round((Number(it.quantity || 1) * Number(it.rate || 0)) * 100) / 100,
-      })),
+      items: submittedItems.map((it) => {
+        const resolvedUnit =
+          typeof it.unit === "string" && it.unit.trim()
+            ? it.unit.trim()
+            : it.itemId
+              ? itemMasterUnitMap.get(String(it.itemId)) || ""
+              : "";
+        return {
+          itemId: it.itemId as string | undefined,
+          name: (String(it.name || "")).trim() || "Item",
+          description: (String(it.description || "")).trim(),
+          account: (it.account as string) || "Cost of Goods Sold",
+          quantity: Math.max(0, Number(it.quantity) || 1),
+          unit: resolvedUnit,
+          rate: Math.max(0, Number(it.rate) || 0),
+          taxRate: Number(it.taxRate) || 0,
+          customerId: it.customerId as string | undefined,
+          customerName: (it.customerName as string) || "",
+          amount: Math.round((Number(it.quantity || 1) * Number(it.rate || 0)) * 100) / 100,
+        };
+      }),
       discount: Number(discount) || 0,
       discountType: discountType === "amount" ? "amount" : "percent",
       taxType: (taxType as "GST" | "TDS" | "None") || "GST",
@@ -429,39 +553,217 @@ export async function POST(request: Request) {
       }
     }
 
+    let finalLocationType: "Warehouse" | "Shop" | undefined =
+      stockLocationType === "Shop" ? "Shop" : stockLocationType === "Warehouse" ? "Warehouse" : undefined;
+    let finalLocationId: Types.ObjectId | undefined =
+      stockLocationId && isValidObjectId(stockLocationId) ? new Types.ObjectId(stockLocationId) : undefined;
+    let finalLocationName = (stockLocationName || "").trim();
+
+    if (stockLocationType && !finalLocationId) {
+      return respondError(`Please select a ${stockLocationType.toLowerCase()}.`, 400);
+    }
+
+    if (!finalLocationType || !finalLocationId) {
+      // Default fallback if not supplied (for backward compatibility)
+      const defaultWh = await Warehouse.findOne({ organizationId: orgObjId, status: "Active" }).select("_id name").lean();
+      if (defaultWh) {
+        finalLocationType = "Warehouse";
+        finalLocationId = new Types.ObjectId(String(defaultWh._id));
+        finalLocationName = String(defaultWh.name || "Main Warehouse");
+      } else {
+        const defaultShop = await StockLocation.findOne({ organizationId: orgObjId, locationType: "Shop" }).select("_id name").lean();
+        if (defaultShop) {
+          finalLocationType = "Shop";
+          finalLocationId = new Types.ObjectId(String(defaultShop._id));
+          finalLocationName = String(defaultShop.name || "Main Shop");
+        }
+      }
+    }
+
+    if (finalLocationType === "Warehouse" && finalLocationId) {
+      const warehouse = await Warehouse.findOne({
+        _id: finalLocationId,
+        organizationId: orgObjId,
+        status: "Active",
+      })
+        .select("_id name")
+        .lean();
+      if (!warehouse) {
+        return respondError("Select an active warehouse from your organization.", 400);
+      }
+      finalLocationName = String(warehouse.name || finalLocationName);
+    } else if (finalLocationType === "Shop" && finalLocationId) {
+      const shop = await StockLocation.findOne({
+        _id: finalLocationId,
+        organizationId: orgObjId,
+        locationType: "Shop",
+        status: "Active",
+      })
+        .select("_id name")
+        .lean();
+      if (!shop) {
+        return respondError("Select an active shop from your organization.", 400);
+      }
+      finalLocationName = String(shop.name || finalLocationName);
+    }
+
+    const commodityIds = (items as Array<Record<string, unknown>>)
+      .map((item) => item.itemId)
+      .filter((itemId): itemId is string => typeof itemId === "string" && itemId.length > 0);
+    if ((items as Array<Record<string, unknown>>).some((item) => item.itemId && !isValidObjectId(String(item.itemId)))) {
+      return respondError("One or more selected commodities are invalid. Re-select them and try again.", 400);
+    }
+    if (commodityIds.length > 0) {
+      const validCommodities = await Item.countDocuments({
+        _id: { $in: commodityIds.map((id) => new Types.ObjectId(id)) },
+        organizationId: orgObjId,
+        active: true,
+      });
+      if (validCommodities !== new Set(commodityIds).size) {
+        return respondError("One or more selected commodities are unavailable in your organization.", 400);
+      }
+    }
+
     const billStatus = requestedStatus === "Draft" ? "Draft" : "Pending";
 
-    const newBill = (await PurchaseBill.create({
-      organizationId: orgObjId,
-      billNumber,
-      vendorId: vendorObjId,
-      vendorName,
-      orderNumber: (orderNumber || "").trim(),
-      billDate: finalBillDate,
-      dueDate: finalDueDate,
-      paymentTerms: paymentTerms || "Due on Receipt",
-      accountsPayable: accountsPayable || "Accounts Payable",
-      subject: (subject || "").trim(),
-      items: calcOutput.items,
-      subTotal: calcOutput.subTotal,
-      discount: Number(discount) || 0,
-      discountType: discountType || "percent",
-      discountAmount: calcOutput.discountAmount,
-      taxType: taxType || "GST",
-      taxRate: Number(taxRate) || 0,
-      taxAmount: calcOutput.taxAmount,
-      cgst: calcOutput.cgst,
-      sgst: calcOutput.sgst,
-      igst: calcOutput.igst,
-      adjustment: calcOutput.adjustment,
-      total: calcOutput.total,
-      amountPaid: 0,
-      status: billStatus,
-      notes: (notes || "").trim(),
-      termsAndConditions: (termsAndConditions || "").trim(),
-      attachments: validatedAttachments,
-      currency: "INR",
-    })) as unknown as PurchaseBillRecord & { _id: Types.ObjectId };
+    let newBill: (PurchaseBillRecord & { _id: Types.ObjectId }) | null = null;
+    let reusedExistingBill = false;
+    if (
+      existingBillCandidate &&
+      matchesBillSubmission(existingBillCandidate, {
+        vendorId: vendorObjId,
+        billDate: finalBillDate,
+        orderNumber: (orderNumber || "").trim(),
+        stockLocationType: finalLocationType,
+        stockLocationId: finalLocationId,
+        items: calcOutput.items as unknown as Array<Record<string, unknown>>,
+        total: calcOutput.total,
+        status: billStatus,
+      })
+    ) {
+      newBill = existingBillCandidate;
+      reusedExistingBill = true;
+    } else if (existingBillCandidate) {
+      return respondError(`Bill number "${billNumber}" already exists in your organization.`, 409);
+    }
+
+    let createAttempts = 0;
+    const maxCreateAttempts = 3;
+
+    while (!newBill && createAttempts < maxCreateAttempts) {
+      createAttempts++;
+      try {
+        newBill = (await PurchaseBill.create({
+          organizationId: orgObjId,
+          billNumber,
+          vendorId: vendorObjId,
+          vendorName,
+          orderNumber: (orderNumber || "").trim(),
+          billDate: finalBillDate,
+          dueDate: finalDueDate,
+          paymentTerms: paymentTerms || "Due on Receipt",
+          accountsPayable: accountsPayable || "Accounts Payable",
+          subject: (subject || "").trim(),
+          stockLocationType: finalLocationType,
+          stockLocationId: finalLocationId,
+          stockLocationName: finalLocationName,
+          items: calcOutput.items,
+          subTotal: calcOutput.subTotal,
+          discount: Number(discount) || 0,
+          discountType: discountType || "percent",
+          discountAmount: calcOutput.discountAmount,
+          taxType: taxType || "GST",
+          taxRate: Number(taxRate) || 0,
+          taxAmount: calcOutput.taxAmount,
+          cgst: calcOutput.cgst,
+          sgst: calcOutput.sgst,
+          igst: calcOutput.igst,
+          adjustment: calcOutput.adjustment,
+          total: calcOutput.total,
+          amountPaid: 0,
+          status: billStatus,
+          notes: (notes || "").trim(),
+          termsAndConditions: (termsAndConditions || "").trim(),
+          attachments: validatedAttachments,
+          currency: "INR",
+        })) as unknown as PurchaseBillRecord & { _id: Types.ObjectId };
+        break;
+      } catch (createErr: unknown) {
+        const isDuplicateKey =
+          typeof createErr === "object" &&
+          createErr !== null &&
+          "code" in createErr &&
+          (createErr as { code?: number }).code === 11000;
+
+        if (isDuplicateKey) {
+          const racedBill = await PurchaseBill.findOne({
+            organizationId: orgObjId,
+            billNumber,
+          }).lean();
+          if (
+            racedBill &&
+            matchesBillSubmission(racedBill as unknown as PurchaseBillRecord, {
+              vendorId: vendorObjId,
+              billDate: finalBillDate,
+              orderNumber: (orderNumber || "").trim(),
+              stockLocationType: finalLocationType,
+              stockLocationId: finalLocationId,
+              items: calcOutput.items as unknown as Array<Record<string, unknown>>,
+              total: calcOutput.total,
+              status: billStatus,
+            })
+          ) {
+            newBill = racedBill as unknown as PurchaseBillRecord & { _id: Types.ObjectId };
+            reusedExistingBill = true;
+            break;
+          }
+        }
+
+        if (isDuplicateKey) {
+          return respondError(`Bill number "${billNumber}" already exists in your organization.`, 409);
+        }
+
+        throw createErr;
+      }
+    }
+
+    if (!newBill) {
+      return respondError("Failed to create purchase bill.", 500);
+    }
+
+    // Automatically add the purchased commodity quantities to the selected location's stock
+    if (finalLocationType && finalLocationId) {
+      try {
+        const stockResult = await recordPurchaseInward({
+          organizationId: orgObjId,
+          billId: newBill._id,
+          billNumber: newBill.billNumber,
+          locationType: finalLocationType,
+          locationId: finalLocationId,
+          items: calcOutput.items.map((it) => ({
+            commodityId: it.itemId ? String(it.itemId) : "",
+            quantity: it.quantity,
+            unit: it.unit || "",
+            rate: it.rate,
+            name: it.name,
+          })),
+          actorId: String(session.user.id),
+        });
+        if (!stockResult.success) {
+          throw new Error(stockResult.error || stockResult.message || "Inventory service did not confirm the stock update.");
+        }
+      } catch (stockErr) {
+        console.error("POST /api/purchases/bills stock update error:", stockErr);
+        const message = stockErr instanceof Error ? stockErr.message : "Unknown stock update error.";
+        return NextResponse.json(
+          {
+            error: `Bill ${newBill.billNumber} was created, but warehouse stock could not be updated: ${message}`,
+            billId: String(newBill._id),
+          },
+          { status: 500 },
+        );
+      }
+    }
 
     return NextResponse.json(
       {
@@ -477,7 +779,7 @@ export async function POST(request: Request) {
           dueDate: newBill.dueDate ? new Date(newBill.dueDate).toISOString() : "",
         },
       },
-      { status: 201 },
+      { status: reusedExistingBill ? 200 : 201 },
     );
   } catch (error) {
     console.error("POST /api/purchases/bills error:", error);

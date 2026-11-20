@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { Expense } from "@/models";
-import { expenseInputSchema, defaultDemoExpenses } from "../route";
+import { expenseInputSchema } from "../route";
 
 export async function GET(
   request: Request,
@@ -10,12 +12,16 @@ export async function GET(
   try {
     const { id } = await params;
     await connectToDatabase().catch(() => null);
-    const expense = await Expense.findById(id).lean().catch(() => null);
+
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const expense = await Expense.findOne({ _id: id, organizationId: orgId }).lean().catch(() => null);
     if (!expense) {
-      const demo = defaultDemoExpenses.find((e) => e.id === id || e.referenceNumber === id);
-      if (demo) {
-        return NextResponse.json({ expense: demo });
-      }
       return NextResponse.json({ error: "Expense not found" }, { status: 404 });
     }
     return NextResponse.json({ expense });
@@ -49,14 +55,15 @@ export async function PUT(
     const data = parseResult.data;
     await connectToDatabase().catch(() => null);
 
-    const expense = await Expense.findById(id).catch(() => null);
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const expense = await Expense.findOne({ _id: id, organizationId: orgId }).catch(() => null);
     if (!expense) {
-      if (id.startsWith("EXP-") || id.startsWith("MIL-") || id.startsWith("demo-")) {
-        return NextResponse.json({
-          message: "Expense updated successfully",
-          expense: { ...data, id, _id: id, referenceNumber: id },
-        });
-      }
       return NextResponse.json({ error: "Expense not found" }, { status: 404 });
     }
 
@@ -109,11 +116,16 @@ export async function DELETE(
   try {
     const { id } = await params;
     await connectToDatabase().catch(() => null);
-    const expense = await Expense.findByIdAndDelete(id).catch(() => null);
+
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const expense = await Expense.findOneAndDelete({ _id: id, organizationId: orgId }).catch(() => null);
     if (!expense) {
-      if (id.startsWith("EXP-") || id.startsWith("MIL-") || id.startsWith("demo-")) {
-        return NextResponse.json({ message: "Expense deleted successfully" });
-      }
       return NextResponse.json({ error: "Expense not found" }, { status: 404 });
     }
     return NextResponse.json({ message: "Expense deleted successfully" });

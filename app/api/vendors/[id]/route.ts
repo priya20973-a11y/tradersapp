@@ -1,16 +1,26 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { Vendor } from "@/models";
 import { vendorInputSchema } from "../route";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
     await connectToDatabase();
-    const vendor = await Vendor.findById(id).lean();
+
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const vendor = await Vendor.findOne({ _id: id, organizationId: orgId }).lean();
     if (!vendor) {
       return NextResponse.json({ error: "Vendor not found" }, { status: 404 });
     }
@@ -48,7 +58,14 @@ export async function PUT(
     const data = parseResult.data;
     await connectToDatabase();
 
-    const vendor = await Vendor.findById(id);
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const vendor = await Vendor.findOne({ _id: id, organizationId: orgId });
     if (!vendor) {
       return NextResponse.json({ error: "Vendor not found" }, { status: 404 });
     }
@@ -57,7 +74,7 @@ export async function PUT(
     const escapedName = data.displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const existing = await Vendor.findOne({
       _id: { $ne: id },
-      organizationId: vendor.organizationId,
+      organizationId: orgId,
       name: { $regex: new RegExp(`^${escapedName}$`, "i") },
     }).lean();
 
@@ -119,13 +136,21 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
     await connectToDatabase();
-    const vendor = await Vendor.findByIdAndDelete(id);
+
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const vendor = await Vendor.findOneAndDelete({ _id: id, organizationId: orgId });
     if (!vendor) {
       return NextResponse.json({ error: "Vendor not found" }, { status: 404 });
     }

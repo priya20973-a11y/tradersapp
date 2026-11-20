@@ -57,6 +57,12 @@ export interface VendorCreditRecord {
   currency: string;
   notes?: string;
   status: "Draft" | "Open" | "Partially Applied" | "Closed" | "Void";
+  isPhysicalReturn?: boolean;
+  stockLocationType?: "Warehouse" | "Shop";
+  stockLocationId?: Types.ObjectId | string;
+  stockLocationName?: string;
+  purchaseBillId?: Types.ObjectId | string;
+  purchaseBillNumber?: string;
   attachments?: VendorCreditAttachment[];
   billsApplied?: VendorCreditBillApplication[];
   createdAt?: Date;
@@ -108,6 +114,12 @@ const VendorCreditSchema = new Schema(
       default: "Open",
       index: true,
     },
+    isPhysicalReturn: { type: Boolean, default: false },
+    stockLocationType: { type: String, enum: ["Warehouse", "Shop"] },
+    stockLocationId: { type: Schema.Types.ObjectId },
+    stockLocationName: { type: String, trim: true },
+    purchaseBillId: { type: Schema.Types.ObjectId, ref: "PurchaseBill" },
+    purchaseBillNumber: { type: String, trim: true },
     attachments: [
       {
         name: { type: String, required: true },

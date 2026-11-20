@@ -1,26 +1,27 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { RecurringExpense } from "@/models";
-import {
-  recurringExpenseSchema,
-  calculateNextDate,
-  defaultDemoRecurringExpenses,
-} from "../route";
+import { recurringExpenseSchema, calculateNextDate } from "../route";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
     await connectToDatabase().catch(() => null);
 
-    const profile = await RecurringExpense.findById(id).lean().catch(() => null);
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const profile = await RecurringExpense.findOne({ _id: id, organizationId: orgId }).lean().catch(() => null);
     if (!profile) {
-      const demo = defaultDemoRecurringExpenses.find((p) => p.id === id || p._id === id);
-      if (demo) {
-        return NextResponse.json({ profile: demo });
-      }
       return NextResponse.json({ error: "Recurring expense profile not found" }, { status: 404 });
     }
 
@@ -61,20 +62,15 @@ export async function PUT(
     const data = parsed.data;
     await connectToDatabase().catch(() => null);
 
-    const profile = await RecurringExpense.findById(id).catch(() => null);
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const profile = await RecurringExpense.findOne({ _id: id, organizationId: orgId }).catch(() => null);
     if (!profile) {
-      if (id.startsWith("demo-") || id.startsWith("REC-")) {
-        const computedNextDate = data.nextDate || calculateNextDate(data.startDate, data.repeatEvery);
-        return NextResponse.json({
-          message: "Recurring expense profile updated successfully",
-          profile: {
-            ...data,
-            id,
-            _id: id,
-            nextDate: computedNextDate,
-          },
-        });
-      }
       return NextResponse.json({ error: "Recurring expense profile not found" }, { status: 404 });
     }
 
@@ -128,14 +124,16 @@ export async function PATCH(
     }
 
     await connectToDatabase().catch(() => null);
-    const profile = await RecurringExpense.findById(id).catch(() => null);
+
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const profile = await RecurringExpense.findOne({ _id: id, organizationId: orgId }).catch(() => null);
     if (!profile) {
-      if (id.startsWith("demo-") || id.startsWith("REC-")) {
-        return NextResponse.json({
-          message: "Recurring expense updated",
-          profile: { id, _id: id, ...body },
-        });
-      }
       return NextResponse.json({ error: "Recurring expense not found" }, { status: 404 });
     }
 
@@ -155,15 +153,22 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
     await connectToDatabase().catch(() => null);
 
-    const deleted = await RecurringExpense.findByIdAndDelete(id).catch(() => null);
-    if (!deleted && !id.startsWith("demo-") && !id.startsWith("REC-")) {
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const deleted = await RecurringExpense.findOneAndDelete({ _id: id, organizationId: orgId }).catch(() => null);
+    if (!deleted) {
       return NextResponse.json({ error: "Recurring expense not found" }, { status: 404 });
     }
 

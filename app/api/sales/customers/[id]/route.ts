@@ -186,3 +186,39 @@ export async function PATCH(
     return respondError(error instanceof Error ? error.message : "Internal Server Error", 500);
   }
 }
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+    if (!id) return respondError("Customer ID is required.", 400);
+
+    const session = await getServerSession(authOptions);
+    if (!session?.user) return respondError("Sign in to delete customer.", 401);
+
+    const url = new URL(request.url);
+    const requestedOrgId = url.searchParams.get("organizationId") ?? undefined;
+    const scope = await getSalesScope(requestedOrgId, session);
+    if ("error" in scope) return scope.error;
+
+    await connectToDatabase();
+
+    const query: Record<string, unknown> = {
+      organizationId: scope.organizationId,
+    };
+    if (isValidObjectId(id)) {
+      query._id = new Types.ObjectId(id);
+    } else {
+      query._id = id;
+    }
+
+    const deleted = await Customer.findOneAndDelete(query);
+    if (!deleted) return respondError("Customer not found.", 404);
+
+    return NextResponse.json({ ok: true, message: "Customer deleted successfully." });
+  } catch (error) {
+    return respondError(error instanceof Error ? error.message : "Internal Server Error", 500);
+  }
+}

@@ -7,6 +7,20 @@ export interface ItemOption {
   unit?: string;
 }
 
+export interface StockLocationOption {
+  id: string;
+  name: string;
+  type: "Warehouse" | "Shop";
+  code?: string;
+}
+
+export interface CommodityStockInfo {
+  onHandStock: number;
+  reservedStock: number;
+  availableStock: number;
+  damagedStock: number;
+}
+
 export interface CustomerOption {
   id: string;
   name: string;
@@ -44,6 +58,9 @@ export interface SalesOrderDocument {
   relatedDocumentId?: string;
   status: string;
   total: number;
+  stockLocationType?: "Warehouse" | "Shop";
+  stockLocationId?: string;
+  stockLocationName?: string;
   issueDate: string;
   dueDate?: string;
   expectedShipmentDate?: string;

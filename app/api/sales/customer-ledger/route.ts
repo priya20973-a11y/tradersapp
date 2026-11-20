@@ -11,85 +11,6 @@ import {
   respondError,
 } from "../sales-service";
 
-const DEMO_CUSTOMERS = [
-  {
-    id: "demo-cust-1",
-    name: "Astra Foods Ltd.",
-    companyName: "Astra Foods Enterprises",
-    email: "billing@astrafoods.in",
-    phone: "+91 98200 11223",
-    gstin: "27AABCA1234F1Z8",
-    openingBalance: 25000,
-    creditLimit: 200000,
-    status: "Active",
-  },
-  {
-    id: "demo-cust-2",
-    name: "City Retail Supermarket",
-    companyName: "City Retail India Pvt Ltd",
-    email: "accounts@cityretail.in",
-    phone: "+91 98199 44556",
-    gstin: "27AAACC5678G2Z1",
-    openingBalance: 15000,
-    creditLimit: 150000,
-    status: "Active",
-  },
-  {
-    id: "demo-cust-3",
-    name: "Ganga Stores & Provisions",
-    companyName: "Ganga Trading Co.",
-    email: "ap@gangastores.in",
-    phone: "+91 98333 77889",
-    gstin: "27AABCG9012H3Z4",
-    openingBalance: 5000,
-    creditLimit: 100000,
-    status: "Active",
-  },
-];
-
-const DEMO_TRANSACTIONS = [
-  {
-    id: "demo-inv-1",
-    date: "2026-10-02T10:00:00.000Z",
-    type: "Invoice" as const,
-    referenceNumber: "INV-1025",
-    description: "Tax Invoice for Basmati Rice (25kg Bags x 50)",
-    amount: 55000,
-  },
-  {
-    id: "demo-pay-1",
-    date: "2026-10-06T14:30:00.000Z",
-    type: "Payment Received" as const,
-    referenceNumber: "PAY-0042",
-    description: "Payment received via NEFT (Ref: HDFCN2628001)",
-    amount: 30000,
-  },
-  {
-    id: "demo-inv-2",
-    date: "2026-10-11T11:15:00.000Z",
-    type: "Invoice" as const,
-    referenceNumber: "INV-1028",
-    description: "Tax Invoice for Wheat Flour Sharbati (30 Bags)",
-    amount: 42500,
-  },
-  {
-    id: "demo-cn-1",
-    date: "2026-10-14T16:00:00.000Z",
-    type: "Credit Note" as const,
-    referenceNumber: "CN-0014",
-    description: "Credit note for damaged bag return (Ref: INV-1025)",
-    amount: 2500,
-  },
-  {
-    id: "demo-pay-2",
-    date: "2026-10-19T09:45:00.000Z",
-    type: "Payment Received" as const,
-    referenceNumber: "PAY-0048",
-    description: "Payment received via UPI (Ref: UPI/261019/9912)",
-    amount: 40000,
-  },
-];
-
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -176,23 +97,20 @@ interface LedgerDocument {
       }
     }
 
-    // Fallback if no customer in DB or DB empty
     if (!selectedCustomer) {
-      customersList = DEMO_CUSTOMERS.map((c) => ({
-        _id: c.id,
-        ...c,
-      }));
-      selectedCustomer =
-        (requestedCustId && customersList.find((c) => String(c._id) === requestedCustId)) ||
-        customersList[0];
-      documentsList = DEMO_TRANSACTIONS.map((d) => ({
-        _id: d.id,
-        number: d.referenceNumber,
-        issueDate: d.date,
-        type: d.type,
-        total: d.amount,
-        notes: d.description,
-      }));
+      return NextResponse.json({
+        customer: null,
+        customers: [],
+        summary: {
+          openingBalance: 0,
+          totalDebit: 0,
+          totalCredit: 0,
+          closingBalance: 0,
+          netOutstanding: 0,
+          transactionCount: 0,
+        },
+        lines: [],
+      });
     }
 
     const openingBalance = Number(selectedCustomer.openingBalance || 0);

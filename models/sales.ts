@@ -199,6 +199,11 @@ export interface SalesDocumentRecord {
     appliedDate: Date;
     notes?: string;
   }[];
+  stockLocationType?: "Warehouse" | "Shop";
+  stockLocationId?: Types.ObjectId | string;
+  stockLocationName?: string;
+  isPhysicalReturn?: boolean;
+  goodsCondition?: "Usable" | "Damaged" | "FinancialOnly";
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -554,6 +559,11 @@ const SalesDocumentSchema = new Schema(
         notes: String,
       },
     ],
+    stockLocationType: { type: String, enum: ["Warehouse", "Shop"] },
+    stockLocationId: { type: Schema.Types.ObjectId },
+    stockLocationName: { type: String, trim: true },
+    isPhysicalReturn: { type: Boolean, default: false },
+    goodsCondition: { type: String, enum: ["Usable", "Damaged", "FinancialOnly"] },
   },
   { timestamps: true },
 );

@@ -30,12 +30,13 @@ export default async function PurchaseOrderDetailPage({
   let poData: Record<string, unknown> | null = null;
 
   if (poDoc) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const doc = poDoc as Record<string, any>;
+    // Convert Mongoose lean document with BSON ObjectIds & Dates to a serializable plain object
+    const plainDoc = JSON.parse(JSON.stringify(poDoc)) as Record<string, unknown>;
     poData = {
-      ...doc,
-      id: String(doc._id || doc.purchaseOrderNumber),
-      _id: String(doc._id || doc.purchaseOrderNumber),
+      ...plainDoc,
+      id: String(plainDoc._id || plainDoc.purchaseOrderNumber || id),
+      _id: String(plainDoc._id || plainDoc.purchaseOrderNumber || id),
+      organizationId: plainDoc.organizationId ? String(plainDoc.organizationId) : "",
     };
   } else {
     // Demo fallback check
@@ -43,7 +44,7 @@ export default async function PurchaseOrderDetailPage({
       (p) => p.id === id || p._id === id || p.purchaseOrderNumber === id,
     );
     if (demo) {
-      poData = demo as unknown as Record<string, unknown>;
+      poData = JSON.parse(JSON.stringify(demo)) as Record<string, unknown>;
     }
   }
 

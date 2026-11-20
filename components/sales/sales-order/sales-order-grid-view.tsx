@@ -129,6 +129,12 @@ export function SalesOrderGridView({
                       : "General consignment order"}
                   </span>
                 </div>
+                {order.stockLocationName && (
+                  <div className="col-span-2 flex items-center gap-1 text-slate-600 truncate pt-1 border-t border-slate-200/50">
+                    <span>{order.stockLocationType === "Shop" ? "🏪" : "🏢"}</span>
+                    <span className="truncate">Location: {order.stockLocationName}</span>
+                  </div>
+                )}
               </div>
 
               {/* Order Total Value */}

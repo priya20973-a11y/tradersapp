@@ -202,13 +202,20 @@ export async function POST(request: Request) {
         : undefined;
 
     // 6. Atomic multi-document transaction: prevents duplicate organization/user creation & guarantees tenant isolation
+    // (gracefully falls back to compensation rollback if running on standalone MongoDB without replica sets)
     signupStage = "registration-transaction";
     await withTransaction(async (session) => {
       // MongoDB sessions do not support parallel operations within a transaction.
-      const existingUserInTx = await User.findOne({ email }).session(session);
-      const existingOrgInTx = await Organization.findOne({
-        name: { $regex: new RegExp(`^${escapeRegex(organizationName)}$`, "i") },
-      }).session(session);
+      const existingUserInTx = session
+        ? await User.findOne({ email }).session(session)
+        : await User.findOne({ email });
+      const existingOrgInTx = session
+        ? await Organization.findOne({
+            name: { $regex: new RegExp(`^${escapeRegex(organizationName)}$`, "i") },
+          }).session(session)
+        : await Organization.findOne({
+            name: { $regex: new RegExp(`^${escapeRegex(organizationName)}$`, "i") },
+          });
 
       if (existingUserInTx) {
         throw new ConflictError("An account with this email already exists.");
@@ -232,32 +239,40 @@ export async function POST(request: Request) {
             bankDetails: cleanBank,
           },
         ],
-        { session },
+        session ? { session } : {},
       );
 
-      await User.create(
-        [
-          {
-            name,
-            email,
-            passwordHash,
-            role: "Organization Owner",
-            organizationId: organization._id,
-            pan: pan || undefined,
-            aadhaar: cleanAadhaar || undefined,
-            gstin: gstin || undefined,
-            logo: logo || undefined,
-            address: address || undefined,
-            state: state || undefined,
-            bankDetails: cleanBank,
-            authzVersion: 0,
-            authVersion: 0,
-            failedLoginCount: 0,
-            lockedUntil: null,
-          },
-        ],
-        { session },
-      );
+      try {
+        await User.create(
+          [
+            {
+              name,
+              email,
+              passwordHash,
+              role: "Organization Owner",
+              organizationId: organization._id,
+              pan: pan || undefined,
+              aadhaar: cleanAadhaar || undefined,
+              gstin: gstin || undefined,
+              logo: logo || undefined,
+              address: address || undefined,
+              state: state || undefined,
+              bankDetails: cleanBank,
+              authzVersion: 0,
+              authVersion: 0,
+              failedLoginCount: 0,
+              lockedUntil: null,
+            },
+          ],
+          session ? { session } : {},
+        );
+      } catch (userCreateErr) {
+        if (!session) {
+          // Manual compensation cleanup if standalone MongoDB doesn't have transactions
+          await Organization.deleteOne({ _id: organization._id }).catch(() => {});
+        }
+        throw userCreateErr;
+      }
     });
 
     signupStage = "signup-complete";

@@ -206,23 +206,8 @@ export function RecurringExpenseForm({
   const [serverError, setServerError] = useState("");
 
   // Vendor & Customer Modal Search
-  const [vendorsList, setVendorsList] = useState<string[]>([
-    "IndoSpace Properties",
-    "TechFlow Systems",
-    "Sentinel Security Services",
-    "Shree Packaging",
-    "Metro Logistics",
-    "Kaveri Agro Industries",
-    "Mohan Traders",
-    "Apex Freight Solutions",
-  ]);
-  const [customersList] = useState<string[]>([
-    "Astra Foods",
-    "City Retail",
-    "Ganga Stores",
-    "Bharat Commodities",
-    "Agro Traders Co.",
-  ]);
+  const [vendorsList, setVendorsList] = useState<string[]>([]);
+  const [customersList, setCustomersList] = useState<string[]>([]);
   const [vendorModalOpen, setVendorModalOpen] = useState(false);
   const [vendorSearchQuery, setVendorSearchQuery] = useState("");
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
@@ -258,21 +243,31 @@ export function RecurringExpenseForm({
     };
   }, [id, initialData]);
 
-  // Fetch real vendors if available
+  // Fetch real vendors & customers if available
   useEffect(() => {
     let active = true;
     fetch("/api/vendors")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (!active || !data?.vendors) return;
-        const names = data.vendors
-          .map((v: { displayName?: string; companyName?: string }) => v.displayName || v.companyName)
-          .filter(Boolean);
-        if (names.length > 0) {
-          setVendorsList((prev) => Array.from(new Set([...names, ...prev])));
-        }
+        const names = (data.vendors as Array<{ displayName?: string; companyName?: string; name?: string }>)
+          .map((v) => v.displayName || v.name || v.companyName)
+          .filter((name): name is string => Boolean(name));
+        setVendorsList(names);
       })
       .catch(() => null);
+
+    fetch("/api/sales?section=customers")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!active || !data?.customers) return;
+        const names = (data.customers as Array<{ name?: string }>)
+          .map((c) => c.name)
+          .filter((name): name is string => Boolean(name));
+        setCustomersList(names);
+      })
+      .catch(() => null);
+
     return () => {
       active = false;
     };

@@ -3,8 +3,9 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import { PurchaseBill, Vendor, VendorPayment, type PurchaseBillAttachment } from "@/models";
+import { Item, Organization, PurchaseBill, Vendor, VendorPayment, type PurchaseBillAttachment } from "@/models";
 import { calculateBillTotals, calculateDueDate } from "@/lib/bill-utils";
+import { escapeRegex } from "@/lib/bill-numbering";
 
 interface BillPayload {
   organizationId?: string;
@@ -56,12 +57,19 @@ export async function GET(
       organizationId = requestedOrgId;
     }
 
+    if (!organizationId || !isValidObjectId(organizationId)) {
+      const defaultOrg =
+        (await Organization.findOne({ status: "active" }).select("_id").lean().catch(() => null)) ||
+        (await Organization.findOne().select("_id").lean().catch(() => null));
+      if (defaultOrg) organizationId = String(defaultOrg._id);
+    }
+
     await connectToDatabase();
-    const orgObjId = new Types.ObjectId(organizationId);
+    const orgObjId = isValidObjectId(organizationId) ? new Types.ObjectId(organizationId) : undefined;
 
     const bill = await PurchaseBill.findOne({
       _id: new Types.ObjectId(id),
-      organizationId: orgObjId,
+      ...(orgObjId ? { organizationId: orgObjId } : {}),
     }).lean();
 
     if (!bill) {
@@ -80,6 +88,24 @@ export async function GET(
     const amountPaid = Number(bill.amountPaid || 0);
     const vendorCreditApplied = Number(bill.vendorCreditApplied || 0);
     const balanceDue = Math.max(0, Math.round((total - vendorCreditApplied - amountPaid) * 100) / 100);
+
+    // Resolve units from Item master if not saved on older line items
+    const missingUnitItemIds = (bill.items || [])
+      .filter((it: { unit?: string; itemId?: unknown }) => !it.unit && it.itemId && isValidObjectId(String(it.itemId)))
+      .map((it: { itemId?: unknown }) => new Types.ObjectId(String(it.itemId)));
+
+    const itemUnitMap = new Map<string, string>();
+    if (typeof Item !== "undefined" && typeof Item.find === "function" && missingUnitItemIds.length > 0) {
+      const dbItems = await Item.find({ _id: { $in: missingUnitItemIds } })
+        .select("_id unit")
+        .lean()
+        .catch(() => []);
+      for (const item of dbItems) {
+        if (item.unit) {
+          itemUnitMap.set(String(item._id), String(item.unit));
+        }
+      }
+    }
 
     return NextResponse.json({
       bill: {
@@ -109,6 +135,9 @@ export async function GET(
         vendorCreditApplied,
         balanceDue,
         status: bill.status,
+        stockLocationType: bill.stockLocationType ? String(bill.stockLocationType) : "",
+        stockLocationId: bill.stockLocationId ? String(bill.stockLocationId) : "",
+        stockLocationName: bill.stockLocationName ? String(bill.stockLocationName) : "",
         creditsApplied: (bill.creditsApplied || []).map((c: { creditId?: unknown; creditNoteNumber?: string; amount?: number; appliedDate?: Date | string; notes?: string }) => ({
           creditId: String(c.creditId),
           creditNoteNumber: c.creditNoteNumber,
@@ -116,12 +145,13 @@ export async function GET(
           appliedDate: c.appliedDate ? new Date(c.appliedDate).toISOString() : "",
           notes: c.notes || "",
         })),
-        items: (bill.items || []).map((it: { itemId?: unknown; name?: string; description?: string; account?: string; quantity?: number; rate?: number; taxRate?: number; taxAmount?: number; customerId?: unknown; customerName?: string; amount?: number }) => ({
+        items: (bill.items || []).map((it: { itemId?: unknown; name?: string; description?: string; account?: string; quantity?: number; unit?: string; rate?: number; taxRate?: number; taxAmount?: number; customerId?: unknown; customerName?: string; amount?: number }) => ({
           itemId: it.itemId ? String(it.itemId) : undefined,
           name: it.name,
           description: it.description || "",
           account: it.account || "Cost of Goods Sold",
           quantity: Number(it.quantity || 1),
+          unit: it.unit || (it.itemId ? itemUnitMap.get(String(it.itemId)) || "" : ""),
           rate: Number(it.rate || 0),
           taxRate: Number(it.taxRate || 0),
           taxAmount: Number(it.taxAmount || 0),
@@ -184,12 +214,19 @@ export async function PUT(
       organizationId = payload.organizationId;
     }
 
+    if (!organizationId || !isValidObjectId(organizationId)) {
+      const defaultOrg =
+        (await Organization.findOne({ status: "active" }).select("_id").lean().catch(() => null)) ||
+        (await Organization.findOne().select("_id").lean().catch(() => null));
+      if (defaultOrg) organizationId = String(defaultOrg._id);
+    }
+
     await connectToDatabase();
-    const orgObjId = new Types.ObjectId(organizationId);
+    const orgObjId = isValidObjectId(organizationId) ? new Types.ObjectId(organizationId) : undefined;
 
     const bill = await PurchaseBill.findOne({
       _id: new Types.ObjectId(id),
-      organizationId: orgObjId,
+      ...(orgObjId ? { organizationId: orgObjId } : {}),
     });
 
     if (!bill) {
@@ -228,8 +265,8 @@ export async function PUT(
       if (trimmed !== bill.billNumber) {
         const existing = await PurchaseBill.findOne({
           _id: { $ne: bill._id },
-          organizationId: orgObjId,
-          billNumber: { $regex: new RegExp(`^${trimmed}$`, "i") },
+          $or: [{ organizationId: orgObjId }, { organizationId: String(orgObjId) }],
+          billNumber: { $regex: new RegExp(`^${escapeRegex(trimmed)}$`, "i") },
         });
         if (existing) {
           return respondError(`Bill number "${trimmed}" is already used by another bill.`, 409);
@@ -261,19 +298,43 @@ export async function PUT(
 
     // If items provided, recalculate totals
     if (Array.isArray(items) && items.length > 0) {
+      const submittedItems = items as Array<Record<string, unknown>>;
+      const needUnitIds = submittedItems
+        .filter((it) => !it.unit && it.itemId && isValidObjectId(String(it.itemId)))
+        .map((it) => new Types.ObjectId(String(it.itemId)));
+      const itemMasterUnitMap = new Map<string, string>();
+      if (typeof Item !== "undefined" && typeof Item.find === "function" && needUnitIds.length > 0) {
+        const foundItems = await Item.find({ _id: { $in: needUnitIds } })
+          .select("_id unit")
+          .lean()
+          .catch(() => []);
+        for (const fi of foundItems) {
+          if (fi.unit) itemMasterUnitMap.set(String(fi._id), String(fi.unit));
+        }
+      }
+
       const calcOutput = calculateBillTotals({
-        items: (items as Array<Record<string, unknown>>).map((it) => ({
-          itemId: it.itemId as string | undefined,
-          name: (String(it.name || "")).trim() || "Item",
-          description: (String(it.description || "")).trim(),
-          account: (it.account as string) || "Cost of Goods Sold",
-          quantity: Math.max(0, Number(it.quantity) || 1),
-          rate: Math.max(0, Number(it.rate) || 0),
-          taxRate: Number(it.taxRate) || 0,
-          customerId: it.customerId as string | undefined,
-          customerName: (it.customerName as string) || "",
-          amount: Math.round((Number(it.quantity || 1) * Number(it.rate || 0)) * 100) / 100,
-        })),
+        items: submittedItems.map((it) => {
+          const resolvedUnit =
+            typeof it.unit === "string" && it.unit.trim()
+              ? it.unit.trim()
+              : it.itemId
+                ? itemMasterUnitMap.get(String(it.itemId)) || ""
+                : "";
+          return {
+            itemId: it.itemId as string | undefined,
+            name: (String(it.name || "")).trim() || "Item",
+            description: (String(it.description || "")).trim(),
+            account: (it.account as string) || "Cost of Goods Sold",
+            quantity: Math.max(0, Number(it.quantity) || 1),
+            unit: resolvedUnit,
+            rate: Math.max(0, Number(it.rate) || 0),
+            taxRate: Number(it.taxRate) || 0,
+            customerId: it.customerId as string | undefined,
+            customerName: (it.customerName as string) || "",
+            amount: Math.round((Number(it.quantity || 1) * Number(it.rate || 0)) * 100) / 100,
+          };
+        }),
         discount: Number(discount) || 0,
         discountType: discountType === "amount" ? "amount" : "percent",
         taxType: taxType || (bill.taxType as "GST" | "TDS" | "None") || "GST",

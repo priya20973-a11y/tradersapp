@@ -180,172 +180,9 @@ export function PurchaseOrderForm({
   const isViewMode = mode === "view";
 
   // Options State
-  const [vendors, setVendors] = useState<VendorOption[]>([
-    {
-      id: "V-401",
-      displayName: "Mohan Traders",
-      companyName: "Mohan Traders Pvt Ltd",
-      email: "mohan@traders.in",
-      phone: "+91 98201 44521",
-      gstin: "27AABCM8421K1ZK",
-      pan: "ABCDE1234F",
-      paymentTerms: "Net 30",
-      address: {
-        street1: "Plot 14, APMC Market Yard",
-        street2: "Phase 2",
-        city: "Navi Mumbai",
-        state: "Maharashtra",
-        postalCode: "400705",
-        country: "India",
-      },
-    },
-    {
-      id: "V-402",
-      displayName: "Shree Packaging",
-      companyName: "Shree Packaging Ltd",
-      email: "finance@shreepack.in",
-      phone: "+91 22 2490 8812",
-      gstin: "27AABCS7712Q1ZX",
-      pan: "SHREE1234D",
-      paymentTerms: "Due on Receipt",
-      address: {
-        street1: "Plot 88, Wagle Estate",
-        street2: "Road No 16",
-        city: "Thane",
-        state: "Maharashtra",
-        postalCode: "400604",
-        country: "India",
-      },
-    },
-    {
-      id: "V-403",
-      displayName: "Metro Logistics",
-      companyName: "Metro Logistics Services",
-      email: "payables@metrologistics.in",
-      phone: "+91 98200 44111",
-      gstin: "27AABCM6612P1ZN",
-      pan: "METRO9821K",
-      paymentTerms: "Net 15",
-      address: {
-        street1: "Plot 3, Logistics Park",
-        street2: "Panvel Bypass",
-        city: "Navi Mumbai",
-        state: "Maharashtra",
-        postalCode: "410206",
-        country: "India",
-      },
-    },
-    {
-      id: "V-404",
-      displayName: "Kaveri Agro Industries",
-      companyName: "Kaveri Agro Industries Ltd",
-      email: "orders@kaveriagro.in",
-      phone: "+91 98450 12890",
-      gstin: "29AABCK1092M1ZN",
-      pan: "KAVAG9912P",
-      paymentTerms: "Net 15",
-      address: {
-        street1: "Agro Complex, Post Box 12",
-        city: "Belagavi",
-        state: "Karnataka",
-        postalCode: "590001",
-        country: "India",
-      },
-    },
-  ]);
-
-  const [customers] = useState<CustomerOption[]>([
-    {
-      id: "C-101",
-      name: "Astra Foods",
-      companyName: "Astra Foods Ltd",
-      email: "billing@astrafoods.in",
-      phone: "+91 20 2712 9000",
-      address: {
-        attention: "Plant Incharge",
-        street: "Plot 55, MIDC Industrial Area, Chakan",
-        city: "Pune",
-        state: "Maharashtra",
-        postalCode: "410501",
-      },
-    },
-    {
-      id: "C-102",
-      name: "City Retail",
-      companyName: "City Retail Chains Pvt Ltd",
-      email: "accounts@cityretail.in",
-      phone: "+91 22 2899 4321",
-      address: {
-        attention: "Central Distribution Center",
-        street: "Warehouse Hub 12, Bhiwandi",
-        city: "Thane",
-        state: "Maharashtra",
-        postalCode: "421302",
-      },
-    },
-    {
-      id: "C-103",
-      name: "Ganga Stores",
-      companyName: "Ganga General Stores",
-      email: "ap@gangastores.in",
-      phone: "+91 79 2650 1199",
-      address: {
-        attention: "Mr. Ramesh Shah",
-        street: "Relief Road Wholesale Market",
-        city: "Ahmedabad",
-        state: "Gujarat",
-        postalCode: "380001",
-      },
-    },
-  ]);
-
-  const [itemsCatalog, setItemsCatalog] = useState<ItemCatalogOption[]>([
-    {
-      id: "SKU-1001",
-      name: "Rice 25kg Premium Bag",
-      sku: "SKU-1001",
-      unit: "Bag",
-      purchasePrice: 2100,
-      purchaseAccount: "Cost of Goods Sold",
-      purchaseDescription: "Grade A aged basmati rice in woven sacks",
-    },
-    {
-      id: "SKU-1002",
-      name: "Milling Wheat Sharbati 50kg",
-      sku: "SKU-1002",
-      unit: "Bag",
-      purchasePrice: 1850,
-      purchaseAccount: "Raw Materials Inventory",
-      purchaseDescription: "Cleaned milling grade wheat lot",
-    },
-    {
-      id: "SKU-PACK-5PLY",
-      name: "Corrugated Master Cartons (5-Ply)",
-      sku: "SKU-PACK-5PLY",
-      unit: "pcs",
-      purchasePrice: 68,
-      purchaseAccount: "Packaging Supplies",
-      purchaseDescription: "Export specification outer corrugated boxes for food grain packs",
-    },
-    {
-      id: "SKU-PAL-01",
-      name: "Standard Wooden Pallets (ISPM-15)",
-      sku: "SKU-PAL-01",
-      unit: "pcs",
-      purchasePrice: 1450,
-      purchaseAccount: "Warehouse & Storage Maintenance",
-      purchaseDescription: "1200x1000mm four-way entry warehouse storage pallets",
-    },
-    {
-      id: "SKU-CORN-01",
-      name: "Yellow Corn Maize 50kg",
-      sku: "SKU-CORN-01",
-      unit: "Bag",
-      purchasePrice: 1100,
-      purchaseAccount: "Cost of Goods Sold",
-      purchaseDescription: "Poultry feed quality lot",
-    },
-  ]);
+  const [vendors, setVendors] = useState<VendorOption[]>([]);
+  const [customers, setCustomers] = useState<CustomerOption[]>([]);
+  const [itemsCatalog, setItemsCatalog] = useState<ItemCatalogOption[]>([]);
 
   // Bulk Add Items Modal State
   const [showBulkAddModal, setShowBulkAddModal] = useState(false);
@@ -416,7 +253,7 @@ export function PurchaseOrderForm({
 
   // Vendor State
   const [selectedVendorName, setSelectedVendorName] = useState<string>(
-    () => initialData?.vendorName || "Mohan Traders",
+    () => initialData?.vendorName || "",
   );
   const selectedVendor = useMemo(
     () => vendors.find((v) => v.displayName === selectedVendorName),
@@ -459,19 +296,19 @@ export function PurchaseOrderForm({
     }
     return [
       {
-        name: "Rice 25kg Premium Bag",
-        description: "Grade A aged basmati rice in woven sacks",
-        sku: "SKU-1001",
+        name: "",
+        description: "",
+        sku: "",
         account: "Cost of Goods Sold",
-        quantity: 100,
+        quantity: 1,
         receivedQuantity: 0,
-        unit: "Bag",
-        rate: 2100,
+        unit: "pcs",
+        rate: 0,
         discount: 0,
         discountType: "percent",
-        taxRate: 5,
-        taxAmount: 10500,
-        amount: 220500,
+        taxRate: 0,
+        taxAmount: 0,
+        amount: 0,
       },
     ];
   });
@@ -544,42 +381,63 @@ export function PurchaseOrderForm({
     fetch("/api/vendors")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!mounted || !data?.vendors?.length) return;
-        setVendors((prev) => {
-          const names = new Set(prev.map((v) => v.displayName));
-          const newOnes = data.vendors
-            .filter((v: { displayName?: string; name?: string }) => !names.has(v.displayName || v.name || ""))
-            .map((v: { _id?: string; id?: string; displayName?: string; name?: string; email?: string; workPhone?: string; pan?: string }) => ({
+        if (!mounted) return;
+        if (Array.isArray(data?.vendors)) {
+          setVendors(
+            data.vendors.map((v: { _id?: string; id?: string; displayName?: string; name?: string; email?: string; workPhone?: string; phone?: string; pan?: string; paymentTerms?: string }) => ({
               id: v._id || v.id || v.displayName || String(Math.random()),
               displayName: v.displayName || v.name || "Vendor",
               companyName: v.displayName || v.name || "Vendor",
               email: v.email || "",
-              phone: v.workPhone || "",
+              phone: v.workPhone || v.phone || "",
               pan: v.pan || "",
-            }));
-          return [...prev, ...newOnes];
-        });
+              paymentTerms: v.paymentTerms || "Due on Receipt",
+            }))
+          );
+        }
+      })
+      .catch(() => {});
+
+    fetch("/api/sales?section=customers")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!mounted) return;
+        if (Array.isArray(data?.customers)) {
+          setCustomers(
+            data.customers.map((c: { id?: string; _id?: string; name?: string; companyName?: string; email?: string; phone?: string; billingAddress?: Record<string, string> }) => ({
+              id: c.id || c._id || "",
+              name: c.name || "",
+              companyName: c.companyName || "",
+              email: c.email || "",
+              phone: c.phone || "",
+              address: c.billingAddress ? {
+                street: c.billingAddress.street1 || "",
+                city: c.billingAddress.city || "",
+                state: c.billingAddress.state || "",
+                postalCode: c.billingAddress.postalCode || "",
+              } : undefined,
+            }))
+          );
+        }
       })
       .catch(() => {});
 
     fetch("/api/items")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!mounted || !data?.items?.length) return;
-        setItemsCatalog((prev) => {
-          const skus = new Set(prev.map((i) => i.sku));
-          const additions = data.items
-            .filter((it: { sku?: string }) => it.sku && !skus.has(it.sku))
-            .map((it: { id?: string; name: string; sku?: string; unit?: string; purchasePrice?: number; purchaseAccount?: string }) => ({
-              id: it.id || it.sku,
+        if (!mounted) return;
+        if (Array.isArray(data?.items)) {
+          setItemsCatalog(
+            data.items.map((it: { id?: string; _id?: string; name: string; sku?: string; unit?: string; purchasePrice?: number; purchaseAccount?: string }) => ({
+              id: it.id || it._id || it.sku || `SKU-${Date.now()}`,
               name: it.name,
               sku: it.sku || `SKU-${Date.now()}`,
               unit: it.unit || "pcs",
               purchasePrice: it.purchasePrice || 0,
               purchaseAccount: it.purchaseAccount || "Cost of Goods Sold",
-            }));
-          return [...prev, ...additions];
-        });
+            }))
+          );
+        }
       })
       .catch(() => {});
 

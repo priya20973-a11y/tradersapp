@@ -166,4 +166,20 @@ describe("Vendor Form & Validation Requirements", () => {
     expect(formContent).toContain("Save & Add New");
     expect(formContent).toContain("Cancel");
   });
+
+  it("verifies Vendor Directory displays only the Vendor Name in the Vendor column and does not render vendor ID", () => {
+    const vendorsDirectoryPath = path.resolve(
+      __dirname,
+      "../components/purchases/vendors-directory.tsx",
+    );
+    expect(fs.existsSync(vendorsDirectoryPath)).toBe(true);
+
+    const dirContent = fs.readFileSync(vendorsDirectoryPath, "utf-8");
+    // Should display vendor name
+    expect(dirContent).toContain("<span>{vendor.name}</span>");
+    // Should keep vendor.id for href / internal operations
+    expect(dirContent).toContain("href={`/purchases/vendors/${vendor.id}`}");
+    // Should NOT display vendor ID below vendor name in the vendor column
+    expect(dirContent).not.toContain("{vendor.id}</div>");
+  });
 });

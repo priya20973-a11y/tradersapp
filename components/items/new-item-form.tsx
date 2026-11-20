@@ -38,7 +38,6 @@ import {
   standardUnits,
   salesAccounts,
   purchaseAccounts,
-  vendorsList,
 } from "./item-constants";
 import { getAllUnitsList, getStoredCustomUnits, type UnitOption } from "./unit-storage";
 import { AddUnitModal } from "./add-unit-modal";
@@ -63,6 +62,7 @@ export function NewItemForm({ onSuccess, onCancel }: NewItemFormProps) {
   const [openingStock, setOpeningStock] = useState("0");
   const [isInventoryEnabled, setIsInventoryEnabled] = useState(false);
   const [unitsList, setUnitsList] = useState<UnitOption[]>(standardUnits);
+  const [vendorsList, setVendorsList] = useState<string[]>([]);
   const [isAddUnitModalOpen, setIsAddUnitModalOpen] = useState(false);
 
   useEffect(() => {
@@ -94,6 +94,19 @@ export function NewItemForm({ onSuccess, onCancel }: NewItemFormProps) {
     fetchInventoryPreference()
       .then((enabled) => {
         if (isMounted) setIsInventoryEnabled(enabled);
+      })
+      .catch(() => {});
+
+    // Load dynamic vendors list
+    fetch("/api/vendors")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isMounted && data?.vendors && Array.isArray(data.vendors)) {
+          const names = data.vendors
+            .map((v: { displayName?: string; name?: string }) => v.displayName || v.name)
+            .filter(Boolean);
+          setVendorsList(names);
+        }
       })
       .catch(() => {});
 

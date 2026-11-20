@@ -12,17 +12,17 @@ describe("Sidebar Orange (#FF8C00) Active-State Styling", () => {
     expect(appShellContent).toContain('<LayoutDashboard className="h-4 w-4 shrink-0" />');
   });
 
-  it("applies orange (#FF8C00) styling to Commodity (Items)", () => {
-    expect(appShellContent).toContain('pathname === "/items" || pathname.startsWith("/items")');
-    expect(appShellContent).toContain('? "bg-[#FF8C00] text-white shadow-sm"');
-    expect(appShellContent).toContain('<Package className="h-4 w-4 shrink-0" />');
+  it("applies orange (#FF8C00) styling to Inventory submodules (Commodity & Warehouse)", () => {
+    expect(appShellContent).toContain('href === "/items" && (pathname === "/items" || pathname.startsWith("/items"))');
+    expect(appShellContent).toContain('href === "/sales/warehouses"');
+    expect(appShellContent).toContain('bg-[#FF8C00] font-medium text-white shadow-sm');
   });
 
   it("keeps module headers, parent menus, and section headings unchanged (no orange background)", () => {
     // Marketplace parent menu button retains bg-slate-800, no orange
     const marketplaceBlock = appShellContent.substring(
       appShellContent.indexOf("{/* Marketplace Module */}"),
-      appShellContent.indexOf("{/* Items */}"),
+      appShellContent.indexOf("{/* Inventory Module */}"),
     );
     expect(marketplaceBlock).toContain("bg-slate-800 text-white");
     expect(marketplaceBlock).toContain('<Store className="h-4 w-4" />');
@@ -30,6 +30,17 @@ describe("Sidebar Orange (#FF8C00) Active-State Styling", () => {
     const marketplaceBtnClass = marketplaceBlock.match(/<button[\s\S]*?className=\{`([\s\S]*?)`\}/);
     expect(marketplaceBtnClass).toBeTruthy();
     expect(marketplaceBtnClass![1]).not.toContain("bg-[#FF8C00]");
+
+    // Inventory parent menu button retains bg-slate-800, no orange
+    const inventoryBlock = appShellContent.substring(
+      appShellContent.indexOf("{/* Inventory Module */}"),
+      appShellContent.indexOf("{/* Sales Module */}"),
+    );
+    expect(inventoryBlock).toContain("bg-slate-800 text-white");
+    expect(inventoryBlock).toContain('<Boxes className="h-4 w-4" />');
+    const inventoryBtnClass = inventoryBlock.match(/<button[\s\S]*?className=\{`([\s\S]*?)`\}/);
+    expect(inventoryBtnClass).toBeTruthy();
+    expect(inventoryBtnClass![1]).not.toContain("bg-[#FF8C00]");
 
     // Sales parent menu button retains bg-slate-800, no orange
     const salesBlock = appShellContent.substring(
@@ -73,6 +84,7 @@ describe("Sidebar Orange (#FF8C00) Active-State Styling", () => {
     expect(appShellContent).toContain('sidebarCollapsed');
     expect(appShellContent).toContain('src="/bharatgodam-logo.jpg"');
     expect(appShellContent).toContain('<Store className="h-4 w-4" />');
+    expect(appShellContent).toContain('<Boxes className="h-4 w-4" />');
     expect(appShellContent).toContain('<ShoppingCart className="h-4 w-4" />');
     expect(appShellContent).toContain('<ShoppingBag className="h-4 w-4" />');
   });

@@ -13,7 +13,7 @@ import {
   Edit2,
   Eye,
 } from "lucide-react";
-import { vendors as defaultVendors } from "@/lib/demo-data";
+
 
 type Vendor = {
   id: string;
@@ -27,34 +27,8 @@ type Vendor = {
   category?: string;
 };
 
-const initialVendors: Vendor[] = [
-  ...defaultVendors.map((v) => ({
-    ...v,
-    phone: "+91 98201 44521",
-    category: "Packaging & Goods",
-  })),
-  {
-    id: "V-404",
-    name: "Kaveri Agro Industries",
-    email: "sales@kaveriagro.com",
-    balance: 34500,
-    status: "Active",
-    phone: "+91 98450 11234",
-    category: "Raw Commodities",
-  },
-  {
-    id: "V-405",
-    name: "Apex Freight Solutions",
-    email: "billing@apexfreight.in",
-    balance: 0,
-    status: "Active",
-    phone: "+91 97110 99882",
-    category: "Logistics",
-  },
-];
-
 export function VendorsDirectory() {
-  const [vendorsList, setVendorsList] = useState<Vendor[]>(initialVendors);
+  const [vendorsList, setVendorsList] = useState<Vendor[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
 
@@ -63,22 +37,24 @@ export function VendorsDirectory() {
     fetch("/api/vendors")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!mounted || !data?.vendors?.length) return;
-        setVendorsList(
-          data.vendors.map((v: Record<string, unknown>) => ({
-            id: String(v.id || v._id),
-            _id: String(v._id || v.id),
-            name: String(v.displayName || v.name),
-            email: String(v.email || ""),
-            balance: Number(v.openingBalance || v.balance || 0),
-            status: String(v.status || "Active"),
-            phone: String(v.workPhone || v.phone || v.mobile || ""),
-            category: String(v.category || "General Purchases"),
-          })),
-        );
+        if (!mounted) return;
+        if (Array.isArray(data?.vendors)) {
+          setVendorsList(
+            data.vendors.map((v: Record<string, unknown>) => ({
+              id: String(v.id || v._id),
+              _id: String(v._id || v.id),
+              name: String(v.displayName || v.name),
+              email: String(v.email || ""),
+              balance: Number(v.openingBalance || v.balance || 0),
+              status: String(v.status || "Active"),
+              phone: String(v.workPhone || v.phone || v.mobile || ""),
+              category: String(v.category || "General Purchases"),
+            })),
+          );
+        }
       })
       .catch(() => {
-        // Fallback to initialVendors on network error
+        if (mounted) setVendorsList([]);
       });
 
     return () => {
@@ -214,7 +190,6 @@ export function VendorsDirectory() {
                       <span>{vendor.name}</span>
                       <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 text-blue-500 transition" />
                     </Link>
-                    <div className="text-xs text-slate-500 font-mono mt-0.5">{vendor.id}</div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5 text-xs text-slate-600">

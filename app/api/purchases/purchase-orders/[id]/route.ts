@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { isValidObjectId } from "mongoose";
+import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { PurchaseOrder, PurchaseBill } from "@/models";
-import {
-  purchaseOrderInputSchema,
-  defaultDemoPurchaseOrders,
-} from "../route";
+import { purchaseOrderInputSchema } from "../route";
 
 export async function GET(
   request: Request,
@@ -14,22 +14,24 @@ export async function GET(
     const { id } = await params;
     await connectToDatabase().catch(() => null);
 
-    let po = await PurchaseOrder.findById(id).lean().catch(() => null);
-    if (!po) {
-      po = await PurchaseOrder.findOne({ purchaseOrderNumber: id }).lean().catch(() => null);
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const query = isValidObjectId(id)
+      ? { _id: id, organizationId: orgId }
+      : { purchaseOrderNumber: id, organizationId: orgId };
+    const po = await PurchaseOrder.findOne(query).lean().catch(() => null);
+
     if (!po) {
-      const demo = defaultDemoPurchaseOrders.find(
-        (p) => p.id === id || p._id === id || p.purchaseOrderNumber === id,
-      );
-      if (demo) {
-        return NextResponse.json({ purchaseOrder: demo });
-      }
       return NextResponse.json({ error: "Purchase Order not found" }, { status: 404 });
     }
 
     const linkedBill = await PurchaseBill.findOne({
+      organizationId: orgId,
       orderNumber: po.purchaseOrderNumber,
     }).lean().catch(() => null);
 
@@ -87,9 +89,19 @@ export async function PUT(
     const data = parseResult.data;
     await connectToDatabase().catch(() => null);
 
-    let po = await PurchaseOrder.findById(id).catch(() => null);
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const poQuery = isValidObjectId(id)
+      ? { _id: id, organizationId: orgId }
+      : { purchaseOrderNumber: id, organizationId: orgId };
+    const po = await PurchaseOrder.findOne(poQuery).catch(() => null);
     if (!po) {
-      po = await PurchaseOrder.findOne({ purchaseOrderNumber: id }).catch(() => null);
+      return NextResponse.json({ error: "Purchase Order not found" }, { status: 404 });
     }
 
     // Calculations
@@ -156,31 +168,6 @@ export async function PUT(
           (data.adjustment || 0)) *
           100,
       ) / 100;
-
-    if (!po) {
-      // Demo fallback mock update
-      if (id.startsWith("PO-") || id.startsWith("demo-")) {
-        return NextResponse.json({
-          message: "Purchase Order updated successfully",
-          purchaseOrder: {
-            ...data,
-            id,
-            _id: id,
-            purchaseOrderNumber: data.purchaseOrderNumber || id,
-            items: computedItems,
-            subtotal: Math.round(calculatedSubtotal * 100) / 100,
-            discountAmount: Math.round(orderDiscountAmount * 100) / 100,
-            taxDeduction,
-            cgst: Math.round(cgstSum * 100) / 100,
-            sgst: Math.round(sgstSum * 100) / 100,
-            igst: Math.round(igstSum * 100) / 100,
-            taxTotal: Math.round(calculatedTaxTotal * 100) / 100,
-            total: Math.max(0, calculatedTotal),
-          },
-        });
-      }
-      return NextResponse.json({ error: "Purchase Order not found" }, { status: 404 });
-    }
 
     Object.assign(po, {
       referenceNumber: data.referenceNumber,
@@ -253,15 +240,19 @@ export async function DELETE(
     const { id } = await params;
     await connectToDatabase().catch(() => null);
 
-    let po = await PurchaseOrder.findByIdAndDelete(id).catch(() => null);
-    if (!po) {
-      po = await PurchaseOrder.findOneAndDelete({ purchaseOrderNumber: id }).catch(() => null);
+    const session = await getServerSession(authOptions).catch(() => null);
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const query = isValidObjectId(id)
+      ? { _id: id, organizationId: orgId }
+      : { purchaseOrderNumber: id, organizationId: orgId };
+
+    const po = await PurchaseOrder.findOneAndDelete(query).catch(() => null);
     if (!po) {
-      if (id.startsWith("PO-") || id.startsWith("demo-")) {
-        return NextResponse.json({ message: "Purchase Order deleted successfully" });
-      }
       return NextResponse.json({ error: "Purchase Order not found" }, { status: 404 });
     }
 

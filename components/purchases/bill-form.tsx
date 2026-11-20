@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -80,6 +80,21 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
   const [vendorId, setVendorId] = useState("");
   const [vendorSearch, setVendorSearch] = useState("");
   const [vendorDropdownOpen, setVendorDropdownOpen] = useState(false);
+  const vendorDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (vendorDropdownRef.current && !vendorDropdownRef.current.contains(event.target as Node)) {
+        setVendorDropdownOpen(false);
+      }
+    }
+    if (vendorDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [vendorDropdownOpen]);
 
   const [billNumber, setBillNumber] = useState("");
   const [orderNumber, setOrderNumber] = useState("");
@@ -89,6 +104,13 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
   const [accountsPayable, setAccountsPayable] = useState("Accounts Payable");
   const [subject, setSubject] = useState("");
 
+  // Stock Location Type (Mandatory: Warehouse | Shop)
+  const [stockLocationType, setStockLocationType] = useState<"Warehouse" | "Shop">("Warehouse");
+  const [stockLocationId, setStockLocationId] = useState("");
+  const [stockLocationName, setStockLocationName] = useState("");
+  const [warehousesList, setWarehousesList] = useState<Array<{ id: string; name: string; code: string }>>([]);
+  const [shopsList, setShopsList] = useState<Array<{ id: string; name: string; code: string }>>([]);
+
   // Item Table
   const [items, setItems] = useState<BillItemInput[]>([
     {
@@ -97,6 +119,7 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
       description: "",
       account: "Cost of Goods Sold",
       quantity: 1,
+      unit: "",
       rate: 0,
       taxRate: 18,
       amount: 0,
@@ -131,12 +154,59 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
   useEffect(() => {
     async function loadInitial() {
       try {
-        const res = await fetch("/api/purchases/bills");
+        const [res, vendorsRes] = await Promise.all([
+          fetch("/api/purchases/bills"),
+          fetch("/api/vendors"),
+        ]);
+
+        let vendorOptions: VendorOption[] = [];
+        if (vendorsRes.ok) {
+          const vData = await vendorsRes.json();
+          if (Array.isArray(vData.vendors) && vData.vendors.length > 0) {
+            vendorOptions = vData.vendors
+              .map((v: Record<string, unknown>) => ({
+                id: String(v.id || v._id || ""),
+                name: String(v.displayName || v.name || v.companyName || "Vendor"),
+                email: String(v.email || ""),
+                phone: String(v.workPhone || v.phone || ""),
+                gstin: String(v.gstin || ""),
+                state: String(v.state || (v.billingAddress as { state?: string })?.state || ""),
+              }))
+              .filter((v: VendorOption) => Boolean(v.id && v.name));
+          }
+        }
+
+        let loadedItems: ItemOption[] = [];
         if (res.ok) {
           const data = await res.json();
-          setVendors(data.vendors || []);
-          setItemsList(data.items || []);
+          if (vendorOptions.length === 0 && Array.isArray(data.vendors)) {
+            vendorOptions = data.vendors;
+          } else if (Array.isArray(data.vendors) && data.vendors.length > 0) {
+            const existingIds = new Set(vendorOptions.map((v) => v.id));
+            for (const v of data.vendors) {
+              if (v.id && !existingIds.has(v.id)) {
+                vendorOptions.push(v);
+                existingIds.add(v.id);
+              }
+            }
+          }
+          setVendors(vendorOptions);
+          loadedItems = data.items || [];
+          setItemsList(loadedItems);
           setCustomersList(data.customers || []);
+        } else if (vendorOptions.length > 0) {
+          setVendors(vendorOptions);
+        }
+
+        const locRes = await fetch("/api/inventory/locations");
+        if (locRes.ok) {
+          const locData = await locRes.json();
+          setWarehousesList(locData.warehouses || []);
+          setShopsList(locData.shops || []);
+          if (!isEditMode && locData.warehouses?.length > 0) {
+            setStockLocationId(locData.warehouses[0].id);
+            setStockLocationName(locData.warehouses[0].name);
+          }
         }
 
         if (isEditMode && initialId) {
@@ -153,6 +223,9 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
           setPaymentTerms(b.paymentTerms || "Due on Receipt");
           setAccountsPayable(b.accountsPayable || "Accounts Payable");
           setSubject(b.subject || "");
+          if (b.stockLocationType) setStockLocationType(b.stockLocationType);
+          if (b.stockLocationId) setStockLocationId(b.stockLocationId);
+          if (b.stockLocationName) setStockLocationName(b.stockLocationName);
           setNotes(b.notes || "");
           setTermsAndConditions(b.termsAndConditions || "");
           setDiscount(b.discount || 0);
@@ -171,6 +244,7 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
                 description: it.description || "",
                 account: it.account || "Cost of Goods Sold",
                 quantity: Number(it.quantity) || 1,
+                unit: it.unit || (it.itemId ? loadedItems.find((catalogItem) => catalogItem.id === String(it.itemId))?.unit || "" : ""),
                 rate: Number(it.rate) || 0,
                 taxRate: Number(it.taxRate) || 0,
                 customerId: it.customerId,
@@ -259,6 +333,7 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
         name: selected.name,
         rate: selected.rate || 0,
         account: selected.account || "Cost of Goods Sold",
+        unit: selected.unit || "",
       });
     } else {
       updateRow(index, { itemId: undefined });
@@ -274,6 +349,7 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
         description: "",
         account: "Cost of Goods Sold",
         quantity: 1,
+        unit: "",
         rate: 0,
         taxRate: 18,
         amount: 0,
@@ -300,6 +376,7 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
           description: "",
           account: "Cost of Goods Sold",
           quantity: 1,
+          unit: "",
           rate: 0,
           taxRate: 18,
           amount: 0,
@@ -416,6 +493,16 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
       return;
     }
 
+    if (!billNumber.trim()) {
+      setError("Please enter a bill number.");
+      return;
+    }
+
+    if (!stockLocationId) {
+      setError(`Please select a ${stockLocationType.toLowerCase()} for inventory tracking.`);
+      return;
+    }
+
     const validItems = items.filter((it) => it.name.trim() !== "" || Number(it.amount || 0) > 0);
     if (validItems.length === 0) {
       setError("Please add at least one line item with a name or amount.");
@@ -429,6 +516,9 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
         vendorId,
         billNumber: billNumber.trim() || undefined,
         orderNumber: orderNumber.trim() || undefined,
+        stockLocationType,
+        stockLocationId,
+        stockLocationName,
         billDate,
         dueDate,
         paymentTerms,
@@ -508,7 +598,7 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
               </span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-0.5">
-              {isEditMode ? `Edit Bill ${billNumber}` : "New Bill"}
+              {isEditMode ? `Edit Bill ${billNumber}` : billNumber ? `New Bill • #${billNumber}` : "New Bill"}
             </h1>
           </div>
         </div>
@@ -573,7 +663,7 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
                 </button>
               </div>
 
-              <div className="relative">
+              <div className="relative" ref={vendorDropdownRef}>
                 <button
                   type="button"
                   onClick={() => setVendorDropdownOpen((prev) => !prev)}
@@ -638,7 +728,7 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
                 </label>
                 <input
                   type="text"
-                  placeholder="Auto-generated if blank (e.g. BILL-0042)"
+                  placeholder="Enter bill number (e.g. INV-2026-001)"
                   value={billNumber}
                   onChange={(e) => setBillNumber(e.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm font-mono text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition"
@@ -647,15 +737,98 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
 
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                  Order Number (PO#)
+                  Order Number
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. PO-2026-081"
+                  placeholder="Enter order number"
                   value={orderNumber}
                   onChange={(e) => setOrderNumber(e.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition"
                 />
+              </div>
+            </div>
+
+            {/* Mandatory Stock Location Selection */}
+            <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-800">
+                  Stock Location Type <span className="text-rose-500">*</span>
+                </label>
+                <span className="text-[11px] font-medium text-blue-600 bg-blue-100/60 px-2 py-0.5 rounded-md">
+                  Inventory Destination
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStockLocationType("Warehouse");
+                    if (warehousesList.length > 0) {
+                      setStockLocationId(warehousesList[0].id);
+                      setStockLocationName(warehousesList[0].name);
+                    } else {
+                      setStockLocationId("");
+                      setStockLocationName("");
+                    }
+                  }}
+                  className={`flex items-center justify-center gap-2 rounded-xl border p-2.5 text-xs font-semibold cursor-pointer transition ${
+                    stockLocationType === "Warehouse"
+                      ? "border-blue-600 bg-white text-blue-700 shadow-xs ring-2 ring-blue-100"
+                      : "border-slate-200 bg-white/70 text-slate-600 hover:bg-white"
+                  }`}
+                >
+                  Warehouse
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStockLocationType("Shop");
+                    if (shopsList.length > 0) {
+                      setStockLocationId(shopsList[0].id);
+                      setStockLocationName(shopsList[0].name);
+                    } else {
+                      setStockLocationId("");
+                      setStockLocationName("");
+                    }
+                  }}
+                  className={`flex items-center justify-center gap-2 rounded-xl border p-2.5 text-xs font-semibold cursor-pointer transition ${
+                    stockLocationType === "Shop"
+                      ? "border-blue-600 bg-white text-blue-700 shadow-xs ring-2 ring-blue-100"
+                      : "border-slate-200 bg-white/70 text-slate-600 hover:bg-white"
+                  }`}
+                >
+                  Shop
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">
+                  Select {stockLocationType} <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={stockLocationId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setStockLocationId(id);
+                    const list = stockLocationType === "Warehouse" ? warehousesList : shopsList;
+                    const found = list.find((x) => x.id === id);
+                    if (found) setStockLocationName(found.name);
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 transition cursor-pointer"
+                >
+                  <option value="">-- Choose {stockLocationType} --</option>
+                  {(stockLocationType === "Warehouse" ? warehousesList : shopsList).map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name} ({loc.code})
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {stockLocationType === "Warehouse"
+                    ? "Purchased commodity quantities will be automatically credited to this warehouse."
+                    : "Purchased commodity quantities will be tracked for this shop."}
+                </p>
               </div>
             </div>
 
@@ -815,6 +988,7 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
                 <th className="px-3 py-3 min-w-[220px]">Item Details</th>
                 <th className="px-3 py-3 min-w-[170px]">Account</th>
                 <th className="px-3 py-3 w-24 text-right">Quantity</th>
+                <th className="px-3 py-3 w-20 text-left">Unit</th>
                 <th className="px-3 py-3 w-32 text-right">Rate (₹)</th>
                 <th className="px-3 py-3 min-w-[160px]">Customer Details</th>
                 <th className="px-3 py-3 w-32 text-right">Amount (₹)</th>
@@ -883,6 +1057,17 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
                       value={row.quantity}
                       onChange={(e) => updateRow(index, { quantity: Number(e.target.value) || 0 })}
                       className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-right font-medium text-slate-900 outline-none focus:border-blue-500"
+                    />
+                  </td>
+
+                  {/* Unit */}
+                  <td className="px-3 py-2 align-top">
+                    <input
+                      type="text"
+                      placeholder="Unit"
+                      value={row.unit || ""}
+                      onChange={(e) => updateRow(index, { unit: e.target.value })}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-900 outline-none focus:border-blue-500"
                     />
                   </td>
 

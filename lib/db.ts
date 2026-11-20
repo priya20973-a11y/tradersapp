@@ -9,7 +9,11 @@
 
 import mongoose, { type ClientSession } from "mongoose";
 import { logger } from "@/lib/logger";
-import { isTransientTransactionError, ServiceUnavailableError } from "@/lib/errors";
+import {
+  isReplicaSetNotSupportedError,
+  isTransientTransactionError,
+  ServiceUnavailableError,
+} from "@/lib/errors";
 
 // ─── HMR-safe global cache ────────────────────────────────────────────────────
 
@@ -90,14 +94,19 @@ export async function connectToDatabase(): Promise<typeof mongoose> {
 
 const MAX_RETRY_ATTEMPTS = 3;
 
+/** Cached indicator if MongoDB server is standalone and does not support transactions */
+let isStandaloneMongo = false;
+
 /**
  * Runs `fn` inside a MongoDB session transaction with automatic retry on
  * TransientTransactionError (write conflicts, network hiccups).
+ * If running on a standalone MongoDB instance (without replica sets), gracefully
+ * falls back to executing `fn` without a transaction.
  *
  * Usage:
  *   const result = await withTransaction(async (session) => {
- *     await StockLot.updateOne({ ... }, { ... }, { session });
- *     await StockMovement.create([{ ... }], { session });
+ *     await StockLot.updateOne({ ... }, { ... }, session ? { session } : {});
+ *     await StockMovement.create([{ ... }], session ? { session } : {});
  *     return { success: true };
  *   });
  *
@@ -105,13 +114,30 @@ const MAX_RETRY_ATTEMPTS = 3;
  * is not transient.
  */
 export async function withTransaction<T>(
-  fn: (session: ClientSession) => Promise<T>,
+  fn: (session?: ClientSession) => Promise<T>,
   attempts = MAX_RETRY_ATTEMPTS,
 ): Promise<T> {
   await connectToDatabase();
 
+  if (isStandaloneMongo) {
+    return await fn(undefined);
+  }
+
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    const session = await mongoose.startSession();
+    let session: ClientSession | undefined;
+    try {
+      session = await mongoose.startSession();
+    } catch (sessionErr: unknown) {
+      if (isReplicaSetNotSupportedError(sessionErr)) {
+        isStandaloneMongo = true;
+        logger.warn(
+          "MongoDB server does not support sessions/transactions (standalone mode) — running without transaction",
+        );
+        return await fn(undefined);
+      }
+      throw sessionErr;
+    }
+
     try {
       let result: T;
       await session.withTransaction(async () => {
@@ -119,6 +145,14 @@ export async function withTransaction<T>(
       });
       return result!;
     } catch (error) {
+      if (isReplicaSetNotSupportedError(error)) {
+        isStandaloneMongo = true;
+        logger.warn(
+          "MongoDB server does not support transactions (standalone mode) — running without transaction",
+        );
+        return await fn(undefined);
+      }
+
       const isTransient = isTransientTransactionError(error);
       if (isTransient && attempt < attempts) {
         const delay = attempt * 100; // 100ms, 200ms, 300ms
@@ -131,7 +165,9 @@ export async function withTransaction<T>(
       }
       throw error;
     } finally {
-      await session.endSession();
+      if (session) {
+        await session.endSession().catch(() => {});
+      }
     }
   }
 

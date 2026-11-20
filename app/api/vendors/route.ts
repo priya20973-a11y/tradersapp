@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
+import { Types } from "mongoose";
 import { getServerSession } from "next-auth";
 import { z } from "zod";
 import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import { Vendor, Organization } from "@/models";
-import { vendors as defaultDemoVendors } from "@/lib/demo-data";
+import { Vendor } from "@/models";
 
 const addressSchema = z.object({
   attention: z.string().trim().default(""),
@@ -57,6 +57,8 @@ export const vendorInputSchema = z.object({
   workPhone: z.string().trim().default(""),
   mobile: z.string().trim().default(""),
   language: z.string().trim().default("English"),
+  gstin: z.string().trim().default(""),
+  state: z.string().trim().default(""),
 
   // Other Details
   pan: z.string().trim().max(10).default(""),
@@ -136,68 +138,19 @@ export async function GET(request: Request) {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase().catch(() => null);
 
-    let orgId = session?.user?.organizationId;
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean().catch(() => null);
-      if (defaultOrg) orgId = String(defaultOrg._id);
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
 
-    const query: Record<string, unknown> = {};
-    if (orgId) query.organizationId = orgId;
+    const query: Record<string, unknown> = { organizationId: orgId };
     if (status && status !== "ALL") query.status = status;
 
     const dbVendors = await Vendor.find(query).sort({ createdAt: -1 }).lean().catch(() => []);
-
-    if (!dbVendors || dbVendors.length === 0) {
-      // Return formatted demo vendors if database has no entries
-      return NextResponse.json({
-        vendors: defaultDemoVendors.map((v, i) => ({
-          _id: v.id,
-          id: v.id,
-          displayName: v.name,
-          name: v.name,
-          companyName: v.name,
-          email: v.email,
-          workPhone: "+91 98201 44521",
-          mobile: "+91 98201 44521",
-          balance: v.balance,
-          openingBalance: v.balance,
-          openingBalanceType: "credit",
-          status: v.status,
-          currency: "INR",
-          language: "English",
-          paymentTerms: "Due on Receipt",
-          pan: "ABCDE1234F",
-          billingAddress: {
-            country: "India",
-            city: "Mumbai",
-            state: "Maharashtra",
-            postalCode: "400001",
-          },
-          shippingAddress: {
-            country: "India",
-            city: "Mumbai",
-            state: "Maharashtra",
-            postalCode: "400001",
-          },
-          contactPersons: [],
-          bankDetails: {
-            accountHolderName: v.name,
-            bankName: "HDFC Bank",
-            accountNumber: `501002938${i}11`,
-            ifscCode: "HDFC0000123",
-            branchName: "Fort, Mumbai",
-          },
-          customFields: [],
-          reportingTags: ["Preferred Vendor"],
-          remarks: "Regular commodity supplier",
-          documents: [],
-        })),
-      });
-    }
 
     return NextResponse.json({
       vendors: dbVendors.map((v: Record<string, unknown>) => ({
@@ -217,6 +170,8 @@ export async function GET(request: Request) {
         language: v.language || "English",
         paymentTerms: v.paymentTerms || "Due on Receipt",
         pan: v.pan || "",
+        gstin: (v.gstin as string) || "",
+        state: (v.state as string) || (v.billingAddress as { state?: string })?.state || "",
         msmeRegistered: Boolean(v.msmeRegistered),
         msmeType: v.msmeType || "",
         msmeNumber: v.msmeNumber || "",
@@ -262,13 +217,10 @@ export async function POST(request: Request) {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase();
 
-    let orgId = session?.user?.organizationId;
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean();
-      if (!defaultOrg) {
-        return NextResponse.json({ error: "No active organization found" }, { status: 400 });
-      }
-      orgId = String(defaultOrg._id);
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     // Check for duplicate vendor display name within this organization
@@ -289,7 +241,7 @@ export async function POST(request: Request) {
 
     // Create the vendor record
     const newVendor = await Vendor.create({
-      organizationId: orgId,
+      organizationId: new Types.ObjectId(orgId),
       name: data.displayName,
       displayName: data.displayName,
       salutation: data.salutation,
@@ -315,7 +267,8 @@ export async function POST(request: Request) {
       portalLanguage: data.portalLanguage,
       billingAddress: data.billingAddress,
       shippingAddress: data.shippingAddress,
-      state: data.billingAddress?.state,
+      gstin: data.gstin || undefined,
+      state: data.state || data.billingAddress?.state || undefined,
       contactPersons: data.contactPersons,
       bankDetails: data.bankDetails,
       customFields: data.customFields,
@@ -325,18 +278,22 @@ export async function POST(request: Request) {
       status: data.status,
     });
 
+    const createdVendor = newVendor as unknown as Record<string, unknown>;
+
     return NextResponse.json(
       {
         message: "Vendor created successfully",
         vendor: {
-          id: String(newVendor._id),
-          _id: String(newVendor._id),
-          displayName: newVendor.displayName || newVendor.name,
-          name: newVendor.name,
-          email: newVendor.email,
-          phone: newVendor.phone,
-          status: newVendor.status,
-          balance: newVendor.openingBalance,
+          id: String(createdVendor._id),
+          _id: String(createdVendor._id),
+          displayName: String(createdVendor.displayName || createdVendor.name || data.displayName),
+          name: String(createdVendor.name || data.displayName),
+          email: String(createdVendor.email || ""),
+          phone: String(createdVendor.phone || createdVendor.workPhone || ""),
+          gstin: String(createdVendor.gstin || ""),
+          state: String(createdVendor.state || ""),
+          status: String(createdVendor.status || "Active"),
+          balance: Number(createdVendor.openingBalance || 0),
         },
       },
       { status: 201 },

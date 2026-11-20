@@ -15,14 +15,9 @@ export async function GET() {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase().catch(() => null);
 
-    let orgId = session?.user?.organizationId;
+    const orgId = session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean().catch(() => null);
-      if (defaultOrg) orgId = String(defaultOrg._id);
-    }
-
-    if (!orgId) {
-      return NextResponse.json({ error: "Organization not found" }, { status: 400 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const orgObjId = new Types.ObjectId(orgId);
@@ -83,14 +78,9 @@ export async function PUT(request: Request) {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase().catch(() => null);
 
-    let orgId = session?.user?.organizationId;
+    const orgId = session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean().catch(() => null);
-      if (defaultOrg) orgId = String(defaultOrg._id);
-    }
-
-    if (!orgId) {
-      return NextResponse.json({ error: "Organization not found" }, { status: 400 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const orgObjId = new Types.ObjectId(orgId);

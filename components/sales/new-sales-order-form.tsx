@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Settings, ShoppingCart, X } from "lucide-react";
 import {
   type CustomerOption,
   type AttachedFile,
   type NewSalesOrderFormProps,
+  type StockLocationOption,
+  type CommodityStockInfo,
 } from "./sales-order/sales-order-types";
 import {
   BulkAddItemsModal,
@@ -56,6 +58,112 @@ export function NewSalesOrderForm({
   const [paymentTerms, setPaymentTerms] = useState("Due on Receipt");
   const [deliveryMethod, setDeliveryMethod] = useState("");
   const [salesperson, setSalesperson] = useState("");
+
+  // Stock Location & Inventory State
+  const [locations, setLocations] = useState<StockLocationOption[]>([]);
+  const [stockLocationType, setStockLocationType] = useState<"Warehouse" | "Shop">("Warehouse");
+  const [stockLocationId, setStockLocationId] = useState("");
+  const [stockLocationName, setStockLocationName] = useState("");
+  const [isLoadingLocations, setIsLoadingLocations] = useState(true);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [stockLevels, setStockLevels] = useState<Record<string, CommodityStockInfo>>({});
+
+  const fetchLocationsForType = useCallback(async (type: "Warehouse" | "Shop") => {
+    setIsLoadingLocations(true);
+    setLocationError(null);
+    try {
+      let locList: StockLocationOption[] = [];
+      if (type === "Warehouse") {
+        // Fetch from existing Warehouse Master API
+        const res = await fetch("/api/trading/warehouses?status=Active");
+        if (res.ok) {
+          const data = await res.json();
+          const activeWarehouses = (data.warehouses || []).filter(
+            (w: { status?: string }) => !w.status || w.status === "Active"
+          );
+          locList = activeWarehouses.map((w: { id: string; name: string; code?: string }) => ({
+            id: String(w.id),
+            name: w.name,
+            code: w.code,
+            type: "Warehouse" as const,
+          }));
+        } else {
+          // Fallback to inventory locations API if trading endpoint returns error
+          const fallbackRes = await fetch("/api/inventory/locations?type=Warehouse");
+          if (!fallbackRes.ok) throw new Error("Failed to load warehouses from server.");
+          const fbData = await fallbackRes.json();
+          const whs = fbData.warehouses || fbData.locations || [];
+          locList = whs.map((w: { id: string; name: string; code?: string }) => ({
+            id: String(w.id),
+            name: w.name,
+            code: w.code,
+            type: "Warehouse" as const,
+          }));
+        }
+      } else {
+        // Fetch from existing inventory/location configuration API
+        const res = await fetch("/api/inventory/locations?type=Shop");
+        if (!res.ok) throw new Error("Failed to load shop locations from server.");
+        const data = await res.json();
+        const shops = data.shops || data.locations || [];
+        locList = shops.map((s: { id: string; name: string; code?: string }) => ({
+          id: String(s.id),
+          name: s.name,
+          code: s.code,
+          type: "Shop" as const,
+        }));
+      }
+
+      setLocations(locList);
+      if (locList.length > 0) {
+        setStockLocationId(locList[0].id);
+        setStockLocationName(locList[0].name);
+      } else {
+        setStockLocationId("");
+        setStockLocationName("");
+      }
+    } catch (err: unknown) {
+      setLocationError(err instanceof Error ? err.message : `Failed to load ${type.toLowerCase()} locations.`);
+      setLocations([]);
+      setStockLocationId("");
+      setStockLocationName("");
+    } finally {
+      setIsLoadingLocations(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => fetchLocationsForType(stockLocationType));
+  }, [fetchLocationsForType, stockLocationType]);
+
+  useEffect(() => {
+    if (!stockLocationId) {
+      void Promise.resolve().then(() => setStockLevels({}));
+      return;
+    }
+    let mounted = true;
+    fetch(`/api/inventory/stock-levels?locationType=${stockLocationType}&locationId=${stockLocationId}`)
+      .then((r) => (r.ok ? r.json() : { stockLevels: [] }))
+      .then((data) => {
+        if (!mounted) return;
+        const map: Record<string, CommodityStockInfo> = {};
+        for (const item of data.stockLevels || []) {
+          map[item.commodityId] = {
+            onHandStock: Number(item.onHandStock) || 0,
+            reservedStock: Number(item.reservedStock) || 0,
+            availableStock: Number(item.availableStock) || 0,
+            damagedStock: Number(item.damagedStock) || 0,
+          };
+        }
+        setStockLevels(map);
+      })
+      .catch(() => {
+        if (mounted) setStockLevels({});
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [stockLocationType, stockLocationId]);
 
   // Line items & calculations from hook
   const {
@@ -200,15 +308,38 @@ export function NewSalesOrderForm({
       return;
     }
 
-    setLoading(true);
-    setError(null);
+    if (!stockLocationId) {
+      setError(`Please select a valid ${stockLocationType.toLowerCase()} for this order.`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
 
     const orderStatus = status === "Draft" ? "Draft" : "Confirmed";
+
+    if (orderStatus === "Confirmed") {
+      for (const row of validRows) {
+        if (row.itemId) {
+          const avail = stockLevels[row.itemId]?.availableStock ?? 0;
+          if (row.quantity > avail) {
+            setError(
+              `Insufficient available stock for "${row.name}" at the selected ${stockLocationType}. Available: ${avail}, Ordered: ${row.quantity}`
+            );
+            return;
+          }
+        }
+      }
+    }
+
+    setLoading(true);
+    setError(null);
 
     try {
       const payload = {
         type: "Sales Order",
         customerId: selectedCustomerId,
+        stockLocationType,
+        stockLocationId,
+        stockLocationName: stockLocationName || locations.find((l) => l.id === stockLocationId)?.name || "",
         number: salesOrderNumber.trim() || undefined,
         referenceNumber: referenceNumber.trim() || undefined,
         issueDate: salesOrderDate || undefined,
@@ -344,6 +475,16 @@ export function NewSalesOrderForm({
           customers={customers}
           selectedCustomerId={selectedCustomerId}
           setSelectedCustomerId={setSelectedCustomerId}
+          stockLocationType={stockLocationType}
+          setStockLocationType={setStockLocationType}
+          stockLocationId={stockLocationId}
+          setStockLocationId={setStockLocationId}
+          stockLocationName={stockLocationName}
+          setStockLocationName={setStockLocationName}
+          locations={locations}
+          isLoadingLocations={isLoadingLocations}
+          locationError={locationError}
+          onRetryLoadLocations={() => fetchLocationsForType(stockLocationType)}
           salesOrderNumber={salesOrderNumber}
           setSalesOrderNumber={setSalesOrderNumber}
           referenceNumber={referenceNumber}
@@ -367,6 +508,7 @@ export function NewSalesOrderForm({
         <SalesOrderItemsTable
           rows={rows}
           availableItems={availableItems}
+          stockLevels={stockLevels}
           showBulkActionsMenu={showBulkActionsMenu}
           setShowBulkActionsMenu={setShowBulkActionsMenu}
           handleSelectItem={handleSelectItem}

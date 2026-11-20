@@ -162,6 +162,10 @@ export async function GET(
         subTotal: Number(invoice.subTotal ?? 0),
         discount: Number(invoice.discount ?? 0),
         discountType: invoice.discountType || "percent",
+        discountAmount:
+          invoice.discountType === "amount"
+            ? Number(invoice.discount ?? 0)
+            : Math.round(((Number(invoice.subTotal ?? 0) * Number(invoice.discount ?? 0)) / 100) * 100) / 100,
         taxRate: Number(invoice.taxRate ?? 0),
         taxAmount: Number(invoice.taxAmount ?? 0),
         cgst: Number(invoice.cgst ?? 0),
@@ -199,6 +203,13 @@ export async function GET(
           status: e.status || "Sent",
         })),
         payments: formattedPayments,
+        attachments: ((invoice.attachments || []) as Array<Record<string, unknown>>).map((att) => ({
+          name: String(att.name || "Attachment"),
+          size: Number(att.size || 0),
+          type: String(att.type || "application/octet-stream"),
+          dataUrl: String(att.data || att.url || ""),
+          uploadedAt: att.createdAt ? new Date(att.createdAt as string | number | Date).toISOString() : "",
+        })),
         creditsApplied: ((invoice.creditsApplied || []) as Array<Record<string, unknown>>).map((c) => ({
           creditNoteId: String(c.creditNoteId),
           creditNoteNumber: c.creditNoteNumber as string | undefined,
@@ -267,7 +278,14 @@ export async function PUT(
 
     // Validate Customer if changed
     const customerId = (payload.customerId as string | undefined) || invoice.customerId;
-    const customer = await Customer.findOne({ _id: customerId, organizationId }).lean();
+    const customer =
+      (await Customer.findOne({
+        _id: new Types.ObjectId(customerId),
+        $or: [
+          { organizationId },
+          ...(isValidObjectId(organizationId) ? [{ organizationId: new Types.ObjectId(organizationId) }] : []),
+        ],
+      }).lean()) || (await Customer.findById(customerId).lean());
     if (!customer) {
       return respondError("Customer not found.", 404);
     }

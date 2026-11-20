@@ -9,21 +9,19 @@ export const itemPreferenceSchema = z.object({
   inventoryEnabled: z.boolean(),
 });
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase().catch(() => null);
 
-    let orgId = session?.user?.organizationId;
+    const url = new URL(request.url);
+    const requestedOrgId = url.searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean().catch(() => null);
-      if (defaultOrg) {
-        orgId = String(defaultOrg._id);
-      }
+      return NextResponse.json({ inventoryEnabled: false });
     }
 
-    const query = orgId ? { organizationId: orgId } : {};
-    const pref = await ItemPreference.findOne(query).lean().catch(() => null);
+    const pref = await ItemPreference.findOne({ organizationId: orgId }).lean().catch(() => null);
 
     return NextResponse.json({
       inventoryEnabled: Boolean(pref?.inventoryEnabled),
@@ -55,18 +53,16 @@ export async function POST(request: Request) {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase();
 
-    let orgId = session?.user?.organizationId;
+    const url = new URL(request.url);
+    const requestedOrgId = url.searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean().catch(() => null);
-      if (defaultOrg) {
-        orgId = String(defaultOrg._id);
-      }
+      return NextResponse.json({ error: "Unauthorized: organization context required" }, { status: 401 });
     }
 
-    const query = orgId ? { organizationId: orgId } : {};
     const updated = await ItemPreference.findOneAndUpdate(
-      query,
-      { $set: { inventoryEnabled, ...(orgId ? { organizationId: orgId } : {}) } },
+      { organizationId: orgId },
+      { $set: { inventoryEnabled, organizationId: orgId } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
 

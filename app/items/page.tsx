@@ -27,13 +27,9 @@ import { ItemTableView } from "@/components/items/item-table-view";
 import { ItemGridView } from "@/components/items/item-grid-view";
 import { ItemQuickViewModal } from "@/components/items/item-quick-view-modal";
 
-let itemsCache: ItemRecord[] | null = null;
-let itemsCacheTime = 0;
-const ITEMS_TTL_MS = 30_000;
-
 export default function ItemsPage() {
-  const [items, setItems] = useState<ItemRecord[]>(() => itemsCache || []);
-  const [loading, setLoading] = useState(() => !itemsCache);
+  const [items, setItems] = useState<ItemRecord[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
@@ -46,18 +42,11 @@ export default function ItemsPage() {
 
   useEffect(() => {
     let isMounted = true;
-    const isFresh = itemsCache && Date.now() - itemsCacheTime < ITEMS_TTL_MS;
-    if (isFresh) {
-      return;
-    }
-
     fetch("/api/items")
       .then((res) => (res.ok ? res.json() : { items: [] }))
       .then((data) => {
         if (isMounted) {
           const list = data.items || [];
-          itemsCache = list;
-          itemsCacheTime = Date.now();
           setItems(list);
           setLoading(false);
         }
@@ -79,8 +68,6 @@ export default function ItemsPage() {
       .then((res) => (res.ok ? res.json() : { items: [] }))
       .then((data) => {
         const list = data.items || [];
-        itemsCache = list;
-        itemsCacheTime = Date.now();
         setItems(list);
         setIsRefreshing(false);
       })

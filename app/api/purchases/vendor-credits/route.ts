@@ -3,9 +3,10 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import { DocumentSequence, Item, Vendor, VendorCredit } from "@/models";
+import { DocumentSequence, Item, PurchaseBill, Vendor, VendorCredit } from "@/models";
 import { formatDateOnly } from "@/lib/bill-utils";
 import { calculateCreditTotals, vendorCreditSchema } from "@/lib/vendor-credit-utils";
+import { recordVendorCreditReturn } from "@/lib/inventory-service";
 
 function respondError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
@@ -241,6 +242,20 @@ export async function POST(request: Request) {
       return respondError("Vendor credit total cannot be negative.", 400);
     }
 
+    let locType = data.stockLocationType;
+    let locId = data.stockLocationId && isValidObjectId(data.stockLocationId) ? new Types.ObjectId(data.stockLocationId) : undefined;
+    const pbId = data.purchaseBillId && isValidObjectId(data.purchaseBillId) ? new Types.ObjectId(data.purchaseBillId) : undefined;
+    let pbNum = data.purchaseBillNumber || "";
+
+    if (pbId && (!locType || !locId)) {
+      const linkedBill = await PurchaseBill.findOne({ _id: pbId, organizationId: orgObjId }).lean();
+      if (linkedBill) {
+        if (!locType && linkedBill.stockLocationType) locType = linkedBill.stockLocationType;
+        if (!locId && linkedBill.stockLocationId) locId = new Types.ObjectId(String(linkedBill.stockLocationId));
+        if (!pbNum && linkedBill.billNumber) pbNum = linkedBill.billNumber;
+      }
+    }
+
     const createdCredit = await VendorCredit.create({
       organizationId: orgObjId,
       creditNoteNumber,
@@ -250,6 +265,12 @@ export async function POST(request: Request) {
       vendorCreditDate: new Date(data.vendorCreditDate),
       subject: data.subject || "",
       accountsPayable: data.accountsPayable || "Accounts Payable",
+      isPhysicalReturn: Boolean(data.isPhysicalReturn),
+      stockLocationType: locType,
+      stockLocationId: locId,
+      stockLocationName: data.stockLocationName || "",
+      purchaseBillId: pbId,
+      purchaseBillNumber: pbNum,
       items: data.items.map((it) => ({
         itemId: it.itemId,
         name: it.name.trim(),
@@ -281,6 +302,24 @@ export async function POST(request: Request) {
       attachments: data.attachments || [],
       billsApplied: [],
     });
+
+    if (data.isPhysicalReturn && locType && locId) {
+      await recordVendorCreditReturn({
+        organizationId: orgObjId,
+        creditId: createdCredit._id,
+        creditNoteNumber,
+        locationType: locType,
+        locationId: locId,
+        isPhysicalReturn: true,
+        items: data.items.map((it) => ({
+          commodityId: it.itemId ? String(it.itemId) : "",
+          quantity: it.quantity,
+          rate: it.rate,
+          name: it.name,
+        })),
+        actorId: String(session.user.id),
+      });
+    }
 
     return NextResponse.json({
       success: true,

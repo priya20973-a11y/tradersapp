@@ -28,8 +28,16 @@ import { SendEmailModal } from "./send-email-modal";
 import { PaymentReceiptModal } from "./payment-receipt-modal";
 import { ApplyCreditNotesModal } from "./apply-credit-notes-modal";
 import { generateInvoicePdf } from "./invoice-pdf-generator";
+import { InvoiceDetailView } from "./invoice-detail-view";
 
-export function InvoicesDirectory() {
+export function InvoicesDirectory({
+  initialSelectedInvoiceId,
+}: {
+  initialSelectedInvoiceId?: string;
+} = {}) {
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(
+    initialSelectedInvoiceId || null
+  );
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [profileLogo, setProfileLogo] = useState<string>("");
   const [settings, setSettings] = useState<InvoiceSettingsData | null>(null);
@@ -233,6 +241,18 @@ export function InvoicesDirectory() {
     link.click();
     document.body.removeChild(link);
   };
+
+  if (selectedInvoiceId) {
+    return (
+      <InvoiceDetailView
+        id={selectedInvoiceId}
+        onClose={() => {
+          setSelectedInvoiceId(null);
+          window.history.pushState(null, "", "/sales/invoices");
+        }}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 text-slate-800">
@@ -474,6 +494,10 @@ export function InvoicesDirectory() {
           selectedInvoices={selectedInvoices}
           onToggleSelectAll={handleToggleSelectAll}
           onToggleSelect={handleToggleSelect}
+          onSelectInvoice={(id) => {
+            setSelectedInvoiceId(id);
+            window.history.pushState(null, "", `/sales/invoices/${id}`);
+          }}
           onRecordPayment={(inv) => setPaymentInvoice(inv)}
           onApplyCredit={(inv) => setCreditInvoice(inv)}
           onSendEmail={(inv) => setEmailInvoice(inv)}
@@ -484,6 +508,10 @@ export function InvoicesDirectory() {
       ) : (
         <InvoiceGridView
           invoices={invoices}
+          onSelectInvoice={(id) => {
+            setSelectedInvoiceId(id);
+            window.history.pushState(null, "", `/sales/invoices/${id}`);
+          }}
           onRecordPayment={(inv) => setPaymentInvoice(inv)}
           onSendEmail={(inv) => setEmailInvoice(inv)}
           onDownloadPdf={handleDownloadPdf}

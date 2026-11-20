@@ -1,20 +1,23 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
-  ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   CreditCard,
   Download,
-  Edit,
-  Eye,
   FileCheck,
+  FileText,
   Loader2,
+  MessageSquare,
+  MoreHorizontal,
   Paperclip,
+  Pencil,
+  Plus,
   Printer,
   Trash2,
   User,
@@ -28,6 +31,7 @@ export interface BillItem {
   description?: string;
   account: string;
   quantity: number;
+  unit?: string;
   rate: number;
   taxRate?: number;
   taxAmount?: number;
@@ -36,7 +40,7 @@ export interface BillItem {
   amount: number;
 }
 
-interface BillAttachment {
+export interface BillAttachment {
   name: string;
   size: number;
   type: string;
@@ -44,7 +48,7 @@ interface BillAttachment {
   uploadedAt?: string;
 }
 
-interface PaymentRecord {
+export interface PaymentRecord {
   id: string;
   paymentNumber: string;
   amount: number;
@@ -112,6 +116,20 @@ export interface BillDetail {
   updatedAt?: string;
 }
 
+interface LeftPaneBillSummary {
+  id: string;
+  billNumber: string;
+  vendorId: string;
+  vendorName: string;
+  orderNumber?: string;
+  billDate: string;
+  dueDate: string;
+  total: number;
+  amountPaid: number;
+  balanceDue: number;
+  status: string;
+}
+
 function formatINR(val: number): string {
   return `₹${Number(val || 0).toLocaleString("en-IN", {
     minimumFractionDigits: 2,
@@ -119,18 +137,17 @@ function formatINR(val: number): string {
   })}`;
 }
 
-function formatDate(dateStr?: string): string {
+function formatDate(dateStr?: string | Date): string {
   if (!dateStr) return "-";
   try {
     const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleDateString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
+    if (isNaN(d.getTime())) return String(dateStr);
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
   } catch {
-    return dateStr;
+    return String(dateStr);
   }
 }
 
@@ -141,16 +158,88 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function BillDetailView({ id }: { id: string }) {
+function getBillStatusInfo(bill: { dueDate?: string | Date; balanceDue?: number; status?: string }) {
+  const status = bill.status || "Draft";
+  const balanceDue = Number(bill.balanceDue || 0);
+
+  if (status === "Paid" || balanceDue <= 0) {
+    return {
+      label: "PAID",
+      colorClass: "text-[#16a34a]",
+    };
+  }
+
+  if (status === "Draft") {
+    return {
+      label: "DRAFT",
+      colorClass: "text-slate-400",
+    };
+  }
+
+  if (status === "Void") {
+    return {
+      label: "VOID",
+      colorClass: "text-slate-400",
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (bill.dueDate) {
+    const due = new Date(bill.dueDate);
+    due.setHours(0, 0, 0, 0);
+    const diffMs = today.getTime() - due.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays > 0) {
+      return {
+        label: `OVERDUE BY ${diffDays} DAY${diffDays > 1 ? "S" : ""}`,
+        colorClass: "text-[#ea580c]",
+      };
+    }
+  }
+
+  if (status === "Partially Paid") {
+    return {
+      label: "PARTIALLY PAID",
+      colorClass: "text-amber-600",
+    };
+  }
+
+  return {
+    label: "OPEN",
+    colorClass: "text-slate-600",
+  };
+}
+
+export function BillDetailView({
+  id,
+  onClose,
+}: {
+  id: string;
+  onClose?: () => void;
+}) {
   const router = useRouter();
 
+  const [activeBillId, setActiveBillId] = useState<string>(id);
   const [bill, setBill] = useState<BillDetail | null>(null);
+  const [billsList, setBillsList] = useState<LeftPaneBillSummary[]>([]);
+  const [loadingBill, setLoadingBill] = useState(true);
   const [profileLogo, setProfileLogo] = useState<string>("");
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Quick Payment Modal
+  // Status Filter in left pane ("ALL", "Draft", "Pending", "Partially Paid", "Paid", "Overdue")
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [showStatusFilterMenu, setShowStatusFilterMenu] = useState(false);
+
+  // Dropdown states for right pane action bar
+  const [showPdfMenu, setShowPdfMenu] = useState(false);
+  const [showMoreActionsMenu, setShowMoreActionsMenu] = useState(false);
+  const [showNewBillMenu, setShowNewBillMenu] = useState(false);
+
+  // Modals / Drawers
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().split("T")[0]);
@@ -160,100 +249,134 @@ export function BillDetailView({ id }: { id: string }) {
   const [paymentNotes, setPaymentNotes] = useState("");
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
-  // Apply Vendor Credit Modal
+  // Apply vendor credit modal
+  const [showCreditModal, setShowCreditModal] = useState(false);
   const [availableCredits, setAvailableCredits] = useState<AvailableVendorCredit[]>([]);
-  const [showApplyCreditModal, setShowApplyCreditModal] = useState(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      return params.get("action") === "apply-credit";
-    }
-    return false;
-  });
-  const [creditAmounts, setCreditAmounts] = useState<Record<string, string>>({});
-  const [applyingCredits, setApplyingCredits] = useState(false);
-  const [creditError, setCreditError] = useState<string | null>(null);
+  const [selectedCreditId, setSelectedCreditId] = useState("");
+  const [creditAmountToApply, setCreditAmountToApply] = useState("");
+  const [applyingCredit, setApplyingCredit] = useState(false);
 
-  // Delete confirmation
+  // Delete modal
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const loadAvailableCredits = useCallback(async (billId: string) => {
-    try {
-      const res = await fetch(`/api/purchases/bills/${billId}/vendor-credits`);
-      if (res.ok) {
-        const data = await res.json();
-        setAvailableCredits(data.availableCredits || []);
+  // Drawers
+  const [showAttachmentsDrawer, setShowAttachmentsDrawer] = useState(false);
+  const [showCommentsDrawer, setShowCommentsDrawer] = useState(false);
+
+  // Dropdown click outside listeners
+  const pdfMenuRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const filterMenuRef = useRef<HTMLDivElement>(null);
+  const newBillMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (pdfMenuRef.current && !pdfMenuRef.current.contains(e.target as Node)) {
+        setShowPdfMenu(false);
       }
-    } catch (err) {
-      console.error("Failed to load vendor credits for bill:", err);
-    }
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setShowMoreActionsMenu(false);
+      }
+      if (filterMenuRef.current && !filterMenuRef.current.contains(e.target as Node)) {
+        setShowStatusFilterMenu(false);
+      }
+      if (newBillMenuRef.current && !newBillMenuRef.current.contains(e.target as Node)) {
+        setShowNewBillMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const loadBill = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/purchases/bills/${id}`);
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to load bill details.");
-      }
-      setBill(data.bill);
-      void loadAvailableCredits(id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error loading bill.");
-    } finally {
-      setLoading(false);
-    }
-  }, [id, loadAvailableCredits]);
+  const [previousId, setPreviousId] = useState(id);
+  if (id !== previousId) {
+    setPreviousId(id);
+    setActiveBillId(id);
+  }
 
+  // Load organization profile logo
   useEffect(() => {
-    if (!id) return;
-    let ignore = false;
-    const fetchInitialBill = async () => {
-      try {
-        const res = await fetch(`/api/purchases/bills/${id}`);
-        const data = await res.json();
-        if (ignore) return;
-        if (!res.ok) {
-          throw new Error(data.error || "Failed to load bill details.");
-        }
-        setBill(data.bill);
-        void loadAvailableCredits(id);
-      } catch (err) {
-        if (!ignore) {
-          setError(err instanceof Error ? err.message : "Error loading bill.");
-        }
-      } finally {
-        if (!ignore) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void fetchInitialBill();
-    return () => {
-      ignore = true;
-    };
-  }, [id, loadAvailableCredits]);
-
-  useEffect(() => {
-    fetch("/api/profile")
+    fetch("/api/admin/profile")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data?.profile?.logo) {
-          setProfileLogo(data.profile.logo);
+        if (data?.organization?.logo) {
+          setProfileLogo(data.organization.logo);
         }
       })
       .catch(() => {});
   }, []);
 
-  const handleDownloadPdf = async () => {
-    if (!bill) return;
-    const doc = await generateBillPdf(bill, profileLogo);
-    doc.save(`${bill.billNumber}.pdf`);
+  // Load list of all bills for left pane
+  const loadBillsList = useCallback(async () => {
+    try {
+      const res = await fetch("/api/purchases/bills");
+      const data = await res.json();
+      if (res.ok && data.bills) {
+        setBillsList(data.bills);
+      }
+    } catch (err) {
+      console.error("Error loading bills list:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => loadBillsList());
+  }, [loadBillsList]);
+
+  // Load single bill detail
+  const loadBill = useCallback(async (billId: string) => {
+    setLoadingBill(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/purchases/bills/${billId}`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to load bill.");
+      }
+      setBill(data.bill);
+
+      // Fetch vendor credits for this vendor
+      if (data.bill?.vendorId) {
+        fetch(`/api/purchases/vendor-credits?vendorId=${data.bill.vendorId}&status=Open`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((cData) => {
+            if (cData?.vendorCredits) {
+              setAvailableCredits(cData.vendorCredits);
+            }
+          })
+          .catch(() => {});
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error fetching bill.");
+    } finally {
+      setLoadingBill(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeBillId) {
+      void Promise.resolve().then(() => loadBill(activeBillId));
+    }
+  }, [activeBillId, loadBill]);
+
+  // Switch to another bill from left pane
+  const handleSelectBill = (newId: string) => {
+    if (newId === activeBillId) return;
+    setActiveBillId(newId);
+    window.history.replaceState(null, "", `/purchases/bills/${newId}`);
   };
 
+  // Close split screen view
+  const handleClose = () => {
+    if (onClose) {
+      onClose();
+    } else {
+      router.push("/purchases/bills");
+    }
+  };
+
+  // Open Record Payment modal
   const handleOpenPayment = () => {
     if (!bill) return;
     setPaymentAmount(bill.balanceDue > 0 ? String(bill.balanceDue) : "");
@@ -264,130 +387,19 @@ export function BillDetailView({ id }: { id: string }) {
     setShowPaymentModal(true);
   };
 
-  const handleOpenApplyCredit = () => {
-    if (!bill) return;
-    setCreditError(null);
-    setCreditAmounts({});
-    if (availableCredits.length === 1) {
-      const singleCredit = availableCredits[0];
-      const maxApplicable = Math.min(singleCredit.balanceRemaining, bill.balanceDue);
-      setCreditAmounts({ [singleCredit.id]: String(Math.round(maxApplicable * 100) / 100) });
-    }
-    setShowApplyCreditModal(true);
-  };
-
-  const handleSetMaxCredit = (creditId: string) => {
-    if (!bill) return;
-    const targetCredit = availableCredits.find((c) => c.id === creditId);
-    if (!targetCredit) return;
-    const otherAllocations = Object.entries(creditAmounts)
-      .filter(([id]) => id !== creditId)
-      .reduce((sum, [, amt]) => sum + (parseFloat(amt) || 0), 0);
-    const remainingDue = Math.max(0, bill.balanceDue - otherAllocations);
-    const maxCanApply = Math.min(targetCredit.balanceRemaining, remainingDue);
-    const rounded = Math.round(maxCanApply * 100) / 100;
-    setCreditAmounts((prev) => ({
-      ...prev,
-      [creditId]: rounded > 0 ? String(rounded) : "",
-    }));
-  };
-
-  const handleApplyAllCredits = () => {
-    if (!bill) return;
-    let remainingDue = bill.balanceDue;
-    const newAmounts: Record<string, string> = {};
-    for (const cred of availableCredits) {
-      if (remainingDue <= 0) {
-        newAmounts[cred.id] = "";
-        continue;
-      }
-      const canApply = Math.min(cred.balanceRemaining, remainingDue);
-      const rounded = Math.round(canApply * 100) / 100;
-      newAmounts[cred.id] = rounded > 0 ? String(rounded) : "";
-      remainingDue = Math.max(0, remainingDue - rounded);
-    }
-    setCreditAmounts(newAmounts);
-  };
-
-  const totalCreditApplying = Object.values(creditAmounts).reduce(
-    (sum, val) => sum + (parseFloat(val) || 0),
-    0
-  );
-  const remainingDueAfterCredit = Math.max(
-    0,
-    Math.round(((bill?.balanceDue || 0) - totalCreditApplying) * 100) / 100
-  );
-
-  const handleApplyCreditsSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!bill) return;
-
-    const apps = Object.entries(creditAmounts)
-      .map(([creditId, amtStr]) => ({ creditId, amount: parseFloat(amtStr) || 0 }))
-      .filter((a) => a.amount > 0);
-
-    if (apps.length === 0) {
-      setCreditError("Please specify at least one vendor credit amount to apply.");
-      return;
-    }
-
-    const totalApplying = apps.reduce((sum, a) => sum + a.amount, 0);
-    const roundedTotal = Math.round(totalApplying * 100) / 100;
-
-    if (roundedTotal > bill.balanceDue + 0.01) {
-      setCreditError(
-        `Total credit applied (${formatINR(roundedTotal)}) cannot exceed payment due (${formatINR(bill.balanceDue)}).`,
-      );
-      return;
-    }
-
-    for (const app of apps) {
-      const cred = availableCredits.find((c) => c.id === app.creditId);
-      if (cred && app.amount > cred.balanceRemaining + 0.01) {
-        setCreditError(
-          `Amount for credit note ${cred.creditNoteNumber} exceeds available balance (${formatINR(cred.balanceRemaining)}).`,
-        );
-        return;
-      }
-    }
-
-    setApplyingCredits(true);
-    setCreditError(null);
-
-    try {
-      const res = await fetch(`/api/purchases/bills/${bill.id}/apply-credits`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credits: apps }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to apply vendor credits.");
-      }
-
-      setNotice(`Vendor credit of ${formatINR(roundedTotal)} applied to Bill #${bill.billNumber} successfully.`);
-      setShowApplyCreditModal(false);
-      void loadBill();
-    } catch (err) {
-      setCreditError(err instanceof Error ? err.message : "Error applying credit.");
-    } finally {
-      setApplyingCredits(false);
-    }
-  };
-
+  // Submit Record Payment
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bill) return;
 
     const amt = parseFloat(paymentAmount);
-    if (!amt || amt <= 0) {
-      setError("Please enter a valid payment amount greater than zero.");
+    if (isNaN(amt) || amt <= 0) {
+      setError("Please enter a valid positive payment amount.");
       return;
     }
 
     if (amt > bill.balanceDue) {
-      setError(`Payment amount cannot exceed the balance due of ${formatINR(bill.balanceDue)}.`);
+      setError(`Payment cannot exceed the balance due of ${formatINR(bill.balanceDue)}.`);
       return;
     }
 
@@ -417,7 +429,8 @@ export function BillDetailView({ id }: { id: string }) {
 
       setNotice(`Payment of ${formatINR(amt)} recorded against Bill #${bill.billNumber}.`);
       setShowPaymentModal(false);
-      void loadBill();
+      void loadBill(activeBillId);
+      void loadBillsList();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error processing payment.");
     } finally {
@@ -425,6 +438,59 @@ export function BillDetailView({ id }: { id: string }) {
     }
   };
 
+  // Open Apply Vendor Credit modal
+  const handleOpenApplyCredit = () => {
+    if (availableCredits.length > 0) {
+      setSelectedCreditId(availableCredits[0].id);
+      setCreditAmountToApply(
+        String(Math.min(bill?.balanceDue || 0, availableCredits[0].balanceRemaining || 0))
+      );
+    }
+    setShowCreditModal(true);
+  };
+
+  // Submit Apply Vendor Credit
+  const handleApplyCredit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bill || !selectedCreditId) return;
+
+    const amt = parseFloat(creditAmountToApply);
+    if (isNaN(amt) || amt <= 0) {
+      setError("Please enter a valid credit amount to apply.");
+      return;
+    }
+
+    setApplyingCredit(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/purchases/vendor-credits", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          creditId: selectedCreditId,
+          billId: bill.id,
+          amountToApply: amt,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to apply vendor credit.");
+      }
+
+      setNotice(`Applied ${formatINR(amt)} credit to Bill #${bill.billNumber}.`);
+      setShowCreditModal(false);
+      void loadBill(activeBillId);
+      void loadBillsList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error applying credit.");
+    } finally {
+      setApplyingCredit(false);
+    }
+  };
+
+  // Delete Bill
   const handleDelete = async () => {
     if (!bill) return;
     setDeleting(true);
@@ -439,7 +505,7 @@ export function BillDetailView({ id }: { id: string }) {
         throw new Error(data.error || "Failed to delete bill.");
       }
 
-      router.push("/purchases/bills");
+      handleClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error deleting bill.");
     } finally {
@@ -448,765 +514,507 @@ export function BillDetailView({ id }: { id: string }) {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex h-96 flex-col items-center justify-center gap-3">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-        <p className="text-sm text-slate-500">Loading purchase bill details…</p>
-      </div>
-    );
-  }
+  // PDF Download
+  const handleDownloadPdf = () => {
+    if (!bill) return;
+    try {
+      generateBillPdf(bill, profileLogo);
+    } catch (err) {
+      console.error("PDF generation error:", err);
+      setError("Failed to generate PDF document.");
+    }
+  };
 
-  if (error && !bill) {
-    return (
-      <div className="rounded-2xl border border-rose-200 bg-white p-8 text-center space-y-4">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-rose-50 text-rose-600">
-          <AlertCircle className="h-6 w-6" />
-        </div>
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Failed to Load Bill</h2>
-          <p className="text-xs text-slate-500 mt-1">{error}</p>
-        </div>
-        <Link
-          href="/purchases/bills"
-          className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Bills
-        </Link>
-      </div>
-    );
-  }
+  // Filtered bills for left pane
+  const filteredLeftBills = useMemo(() => {
+    return billsList.filter((b) => {
+      if (statusFilter === "ALL") return true;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const isOverdue =
+        b.dueDate && new Date(b.dueDate) < today && b.balanceDue > 0 && b.status !== "Draft";
 
-  if (!bill) return null;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const isOverdue =
-    bill.dueDate &&
-    new Date(bill.dueDate) < today &&
-    bill.balanceDue > 0 &&
-    bill.status !== "Draft";
+      if (statusFilter === "Overdue") return isOverdue;
+      if (statusFilter === "Paid") return b.status === "Paid" || b.balanceDue <= 0;
+      if (statusFilter === "Pending") return b.status === "Pending" && !isOverdue;
+      return b.status.toLowerCase() === statusFilter.toLowerCase();
+    });
+  }, [billsList, statusFilter]);
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto pb-16">
-      {/* Top Action Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 print:hidden">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/purchases/bills"
-            className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition"
-            title="Back to Bills"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-                Bill #{bill.billNumber}
-              </h1>
-              <span
-                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                  bill.status === "Paid"
-                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                    : bill.status === "Partially Paid"
-                    ? "bg-amber-50 text-amber-700 border border-amber-200"
-                    : bill.status === "Draft"
-                    ? "bg-slate-100 text-slate-700 border border-slate-200"
-                    : isOverdue
-                    ? "bg-rose-50 text-rose-700 border border-rose-200"
-                    : "bg-blue-50 text-blue-700 border border-blue-200"
-                }`}
-              >
-                {bill.status === "Paid" && <CheckCircle2 className="h-3 w-3" />}
-                {bill.status}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Vendor: <span className="font-semibold text-slate-700">{bill.vendorName}</span>
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Apply Vendor Credit */}
-          {bill.balanceDue > 0 && bill.status !== "Draft" && bill.status !== "Void" && (
+    <div className="flex h-[calc(100vh-80px)] w-full overflow-hidden bg-white text-slate-800">
+      {/* ========================================================= */}
+      {/* LEFT PANE: Master Bills List */}
+      {/* ========================================================= */}
+      <aside className="w-80 lg:w-[350px] shrink-0 border-r border-slate-200 bg-white flex flex-col h-full">
+        {/* Left Pane Header Bar */}
+        <div className="h-14 px-4 border-b border-slate-200 flex items-center justify-between bg-white shrink-0">
+          {/* "All Bills ▾" dropdown */}
+          <div className="relative" ref={filterMenuRef}>
             <button
               type="button"
-              onClick={handleOpenApplyCredit}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-purple-700 transition cursor-pointer"
+              onClick={() => setShowStatusFilterMenu((prev) => !prev)}
+              className="flex items-center gap-1.5 text-sm font-semibold text-slate-900 hover:text-blue-600 transition cursor-pointer"
             >
-              <CreditCard className="h-3.5 w-3.5" />
-              Apply Vendor Credit
+              <span>{statusFilter === "ALL" ? "All Bills" : `${statusFilter} Bills`}</span>
+              <ChevronDown className="w-4 h-4 text-slate-500" />
             </button>
-          )}
 
-          {/* Record Payment */}
-          {bill.balanceDue > 0 && bill.status !== "Draft" && (
-            <button
-              type="button"
-              onClick={handleOpenPayment}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 transition"
-            >
-              <CreditCard className="h-3.5 w-3.5" />
-              Record Payment
-            </button>
-          )}
-
-          {/* Edit */}
-          <Link
-            href={`/purchases/bills/${bill.id}/edit`}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
-          >
-            <Edit className="h-3.5 w-3.5" />
-            Edit
-          </Link>
-
-          {/* Download PDF */}
-          <button
-            type="button"
-            onClick={handleDownloadPdf}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-          >
-            <Download className="h-3.5 w-3.5" />
-            PDF
-          </button>
-
-          {/* Print */}
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
-          >
-            <Printer className="h-3.5 w-3.5" />
-            Print
-          </button>
-
-          {/* Delete */}
-          <button
-            type="button"
-            onClick={() => setShowDeleteModal(true)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 transition"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete
-          </button>
-        </div>
-      </div>
-
-      {/* Available Vendor Credits Notification Banner */}
-      {availableCredits.length > 0 && bill.balanceDue > 0 && bill.status !== "Draft" && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-purple-200 bg-purple-50/70 p-4 text-xs text-purple-900 shadow-xs print:hidden">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-700">
-              <CreditCard className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="font-bold text-sm text-purple-950">
-                Available Vendor Credit: {formatINR(availableCredits.reduce((sum, c) => sum + c.balanceRemaining, 0))}
-              </p>
-              <p className="text-purple-800/80 mt-0.5">
-                Vendor <span className="font-semibold">{bill.vendorName}</span> has {availableCredits.length} open credit note{availableCredits.length > 1 ? "s" : ""} available to settle this bill.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleOpenApplyCredit}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-purple-700 transition cursor-pointer"
-          >
-            Apply Credit
-          </button>
-        </div>
-      )}
-
-      {/* Notice feedback */}
-      {notice && (
-        <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 print:hidden">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 shrink-0" />
-            <span>{notice}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setNotice(null)}
-            className="rounded p-1 hover:bg-emerald-100"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
-
-      {/* Main Document Card */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm space-y-8 print:border-none print:shadow-none print:p-0">
-        {/* Document Header */}
-        <div className="flex flex-wrap items-start justify-between gap-6 border-b border-slate-100 pb-6">
-          <div className="flex items-start gap-4">
-            {profileLogo && (
-              <div className="shrink-0">
-                <Image
-                  src={profileLogo}
-                  alt="Company Logo"
-                  width={140}
-                  height={64}
-                  unoptimized
-                  className="h-16 w-auto max-w-[140px] object-contain rounded-lg border border-slate-100 p-1 bg-white print:border-none"
-                />
+            {showStatusFilterMenu && (
+              <div className="absolute left-0 top-full mt-1.5 w-48 rounded-lg bg-white border border-slate-200 shadow-lg py-1.5 z-30 text-xs font-medium text-slate-700">
+                {[
+                  { id: "ALL", label: "All Bills" },
+                  { id: "Draft", label: "Draft Bills" },
+                  { id: "Pending", label: "Pending Bills" },
+                  { id: "Partially Paid", label: "Partially Paid" },
+                  { id: "Paid", label: "Paid Bills" },
+                  { id: "Overdue", label: "Overdue Bills" },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter(item.id);
+                      setShowStatusFilterMenu(false);
+                    }}
+                    className={`w-full text-left px-3.5 py-2 hover:bg-slate-50 transition cursor-pointer flex items-center justify-between ${
+                      statusFilter === item.id ? "text-blue-600 font-semibold bg-blue-50/50" : ""
+                    }`}
+                  >
+                    <span>{item.label}</span>
+                  </button>
+                ))}
               </div>
             )}
-            <div>
-              <span className="text-[10px] font-bold tracking-[0.2em] text-blue-600 uppercase">
-                Purchase Bill
-              </span>
-              <h2 className="text-3xl font-black tracking-tight text-slate-900 mt-0.5">
-                #{bill.billNumber}
-              </h2>
-              {bill.subject && (
-                <p className="text-sm font-medium text-slate-600 mt-1 max-w-md">{bill.subject}</p>
-              )}
-            </div>
           </div>
 
-          <div className="text-right">
-            <span className="text-xs uppercase tracking-wider text-slate-400 font-semibold">
-              Payment Due
-            </span>
-            <div className="text-3xl font-black text-slate-900 mt-0.5">
-              {formatINR(bill.balanceDue)}
-            </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Bill Total: <span className="font-semibold text-slate-800">{formatINR(bill.total)}</span>
-              {(bill.vendorCreditApplied || 0) > 0 && (
-                <span className="ml-2 text-purple-600">
-                  (Credit: {formatINR(bill.vendorCreditApplied || 0)})
-                </span>
-              )}
-              {bill.amountPaid > 0 && (
-                <span className="ml-2 text-emerald-600">
-                  (Paid: {formatINR(bill.amountPaid)})
-                </span>
-              )}
-            </p>
-          </div>
-        </div>
-
-        {/* Vendor & Bill Metadata Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Vendor Details */}
-          <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-5 space-y-2">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-              <User className="h-3.5 w-3.5" />
-              Vendor Information
-            </div>
-            <h3 className="text-base font-bold text-slate-900">{bill.vendorName}</h3>
-            <p className="text-xs text-slate-600">
-              <span className="text-slate-400">Accounts Payable:</span> {bill.accountsPayable}
-            </p>
-          </div>
-
-          {/* Dates & Terms Details */}
-          <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-5 grid grid-cols-2 gap-4 text-xs">
-            <div>
-              <span className="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">
-                Bill Date
-              </span>
-              <p className="font-semibold text-slate-900 mt-0.5 font-mono">
-                {formatDate(bill.billDate)}
-              </p>
-            </div>
-
-            <div>
-              <span className="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">
-                Due Date
-              </span>
-              <p
-                className={`font-semibold mt-0.5 font-mono ${
-                  isOverdue ? "text-rose-600" : "text-slate-900"
-                }`}
+          {/* Action buttons on top right of list */}
+          <div className="flex items-center gap-1.5">
+            {/* Split Blue Button [+ | ▾] */}
+            <div className="relative flex items-center shadow-2xs rounded-md overflow-hidden" ref={newBillMenuRef}>
+              <Link
+                href="/purchases/bills/new"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 flex items-center justify-center transition"
+                title="New Bill"
               >
-                {formatDate(bill.dueDate)}
-                {isOverdue && <span className="ml-1 text-[10px] font-bold">(Overdue)</span>}
-              </p>
-            </div>
-
-            <div>
-              <span className="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">
-                Payment Terms
-              </span>
-              <p className="font-semibold text-slate-900 mt-0.5">{bill.paymentTerms}</p>
-            </div>
-
-            <div>
-              <span className="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">
-                Order / PO Number
-              </span>
-              <p className="font-semibold text-slate-900 mt-0.5 font-mono">
-                {bill.orderNumber || "—"}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Line Items Table */}
-        <div className="overflow-hidden rounded-xl border border-slate-200">
-          <table className="min-w-full divide-y divide-slate-200 text-left">
-            <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-              <tr>
-                <th className="px-5 py-3 w-12 text-center">#</th>
-                <th className="px-5 py-3">Item Details</th>
-                <th className="px-5 py-3">Account</th>
-                <th className="px-5 py-3 text-right">Qty</th>
-                <th className="px-5 py-3 text-right">Rate</th>
-                <th className="px-5 py-3">Customer Allocation</th>
-                <th className="px-5 py-3 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-              {bill.items.map((item, index) => (
-                <tr key={index} className="hover:bg-slate-50/50">
-                  <td className="px-5 py-3 text-center text-slate-400 font-mono">{index + 1}</td>
-                  <td className="px-5 py-3">
-                    <p className="font-semibold text-slate-900">{item.name}</p>
-                    {item.description && (
-                      <p className="text-[11px] text-slate-400 mt-0.5">{item.description}</p>
-                    )}
-                  </td>
-                  <td className="px-5 py-3 text-slate-600">{item.account}</td>
-                  <td className="px-5 py-3 text-right font-mono font-medium text-slate-800">
-                    {item.quantity}
-                  </td>
-                  <td className="px-5 py-3 text-right font-mono font-medium text-slate-800">
-                    {formatINR(item.rate)}
-                  </td>
-                  <td className="px-5 py-3 text-slate-600 font-medium">
-                    {item.customerName ? (
-                      <span className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">
-                        {item.customerName}
-                      </span>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3 text-right font-mono font-bold text-slate-900">
-                    {formatINR(item.amount)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Calculation & Notes Breakdown */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-2">
-          {/* Notes and Terms & Attachments */}
-          <div className="space-y-6 text-xs">
-            {bill.notes && (
-              <div>
-                <h4 className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">
-                  Customer Notes / Memo
-                </h4>
-                <p className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-slate-600 whitespace-pre-wrap">
-                  {bill.notes}
-                </p>
-              </div>
-            )}
-
-            {bill.termsAndConditions && (
-              <div>
-                <h4 className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">
-                  Terms & Conditions
-                </h4>
-                <p className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-slate-600 whitespace-pre-wrap">
-                  {bill.termsAndConditions}
-                </p>
-              </div>
-            )}
-
-            {/* Attachments Section */}
-            {bill.attachments && bill.attachments.length > 0 && (
-              <div>
-                <h4 className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-2 flex items-center gap-1.5">
-                  <Paperclip className="h-3.5 w-3.5 text-slate-500" />
-                  Attachments ({bill.attachments.length} files)
-                </h4>
-                <div className="space-y-2">
-                  {bill.attachments.map((file, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3 hover:bg-slate-50 transition"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <FileCheck className="h-4 w-4 shrink-0 text-blue-600" />
-                        <div className="min-w-0">
-                          <p className="font-semibold text-slate-900 truncate text-xs">{file.name}</p>
-                          <p className="text-[10px] text-slate-400">{formatFileSize(file.size)}</p>
-                        </div>
-                      </div>
-
-                      {file.dataUrl && (
-                        <a
-                          href={file.dataUrl}
-                          download={file.name}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 transition shrink-0"
-                        >
-                          <Download className="h-3 w-3" />
-                          Download
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Calculations Table */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-5 space-y-3 text-xs">
-            <div className="flex justify-between items-center text-slate-600">
-              <span>Sub Total</span>
-              <span className="font-mono font-semibold text-slate-900">
-                {formatINR(bill.subTotal)}
-              </span>
-            </div>
-
-            {bill.discountAmount > 0 && (
-              <div className="flex justify-between items-center text-slate-600">
-                <span>
-                  Discount {bill.discountType === "percent" ? `(${bill.discount}%)` : ""}
-                </span>
-                <span className="font-mono font-semibold text-rose-600">
-                  -{formatINR(bill.discountAmount)}
-                </span>
-              </div>
-            )}
-
-            {/* GST breakdown */}
-            {bill.taxAmount > 0 && (
-              <>
-                {bill.cgst > 0 && (
-                  <div className="flex justify-between items-center text-slate-600">
-                    <span>CGST ({bill.taxRate / 2}%)</span>
-                    <span className="font-mono font-semibold text-slate-900">
-                      +{formatINR(bill.cgst)}
-                    </span>
-                  </div>
-                )}
-                {bill.sgst > 0 && (
-                  <div className="flex justify-between items-center text-slate-600">
-                    <span>SGST ({bill.taxRate / 2}%)</span>
-                    <span className="font-mono font-semibold text-slate-900">
-                      +{formatINR(bill.sgst)}
-                    </span>
-                  </div>
-                )}
-                {bill.igst > 0 && (
-                  <div className="flex justify-between items-center text-slate-600">
-                    <span>IGST ({bill.taxRate}%)</span>
-                    <span className="font-mono font-semibold text-slate-900">
-                      +{formatINR(bill.igst)}
-                    </span>
-                  </div>
-                )}
-              </>
-            )}
-
-            {bill.adjustment !== 0 && (
-              <div className="flex justify-between items-center text-slate-600">
-                <span>Adjustment</span>
-                <span className="font-mono font-semibold text-slate-900">
-                  {bill.adjustment > 0 ? `+${formatINR(bill.adjustment)}` : formatINR(bill.adjustment)}
-                </span>
-              </div>
-            )}
-
-            <div className="border-t border-slate-200 pt-3 flex justify-between items-center">
-              <span className="text-sm font-bold text-slate-900">Bill Total</span>
-              <span className="text-lg font-black text-slate-900 font-mono">
-                {formatINR(bill.total)}
-              </span>
-            </div>
-
-            <div className="border-t border-slate-200 pt-2 flex justify-between items-center text-purple-700">
-              <span className="font-medium">Vendor Credit Applied</span>
-              <span className="font-mono font-bold">
-                {bill.vendorCreditApplied && bill.vendorCreditApplied > 0
-                  ? `(-) ${formatINR(bill.vendorCreditApplied)}`
-                  : formatINR(0)}
-              </span>
-            </div>
-
-            <div className="flex justify-between items-center text-emerald-700">
-              <span className="font-medium">Payment Made</span>
-              <span className="font-mono font-bold">
-                {bill.amountPaid > 0 ? `(-) ${formatINR(bill.amountPaid)}` : formatINR(0)}
-              </span>
-            </div>
-
-            <div
-              className={`rounded-lg border p-3 flex justify-between items-center ${
-                bill.balanceDue === 0
-                  ? "bg-emerald-50/60 border-emerald-200 text-emerald-900"
-                  : "bg-white border-slate-200"
-              }`}
-            >
-              <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
-                  Payment Due
-                </span>
-                <span className="text-[10px] text-slate-400">
-                  Bill Total − Credit Applied − Payment Made
-                </span>
-              </div>
-              <span
-                className={`text-base font-black font-mono ${
-                  bill.balanceDue === 0 ? "text-emerald-700" : "text-amber-600"
-                }`}
-              >
-                {formatINR(bill.balanceDue)}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Vendor Credits Applied Section */}
-        {bill.creditsApplied && bill.creditsApplied.length > 0 && (
-          <div className="border-t border-slate-100 pt-6 space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <FileCheck className="h-4 w-4 text-purple-600" />
-                Vendor Credits Applied
-              </h4>
-              <span className="text-xs font-semibold text-purple-700 font-mono">
-                Total Credit Applied: {formatINR(bill.vendorCreditApplied || 0)}
-              </span>
-            </div>
-            <div className="overflow-hidden rounded-xl border border-slate-200">
-              <table className="min-w-full divide-y divide-slate-200 text-left">
-                <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                  <tr>
-                    <th className="px-5 py-2.5">Date</th>
-                    <th className="px-5 py-2.5">Credit Note #</th>
-                    <th className="px-5 py-2.5">Notes</th>
-                    <th className="px-5 py-2.5 text-right">Amount Applied</th>
-                    <th className="px-5 py-2.5 text-center">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                  {bill.creditsApplied.map((c, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/50">
-                      <td className="px-5 py-3 font-mono text-slate-500 whitespace-nowrap">
-                        {formatDate(c.appliedDate)}
-                      </td>
-                      <td className="px-5 py-3 font-semibold font-mono text-purple-700">
-                        {c.creditNoteNumber}
-                      </td>
-                      <td className="px-5 py-3 text-slate-600">
-                        {c.notes || `Applied to Bill #${bill.billNumber}`}
-                      </td>
-                      <td className="px-5 py-3 text-right font-mono font-bold text-purple-700">
-                        {formatINR(c.amount)}
-                      </td>
-                      <td className="px-5 py-3 text-center">
-                        <Link
-                          href={`/purchases/vendor-credits/${c.creditId}`}
-                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100 transition"
-                        >
-                          <Eye className="h-3 w-3" />
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Payments History Section */}
-        {bill.payments && bill.payments.length > 0 && (
-          <div className="border-t border-slate-100 pt-6 space-y-3">
-            <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <CreditCard className="h-4 w-4 text-blue-600" />
-              Payment History
-            </h4>
-            <div className="overflow-hidden rounded-xl border border-slate-200">
-              <table className="min-w-full divide-y divide-slate-200 text-left">
-                <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                  <tr>
-                    <th className="px-5 py-2.5">Date</th>
-                    <th className="px-5 py-2.5">Payment #</th>
-                    <th className="px-5 py-2.5">Mode</th>
-                    <th className="px-5 py-2.5">Reference #</th>
-                    <th className="px-5 py-2.5 text-right">Amount Paid</th>
-                    <th className="px-5 py-2.5 text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                  {bill.payments.map((p) => (
-                    <tr key={p.id} className="hover:bg-slate-50/50">
-                      <td className="px-5 py-3 font-mono text-slate-500 whitespace-nowrap">
-                        {formatDate(p.paymentDate)}
-                      </td>
-                      <td className="px-5 py-3 font-semibold font-mono text-slate-900">
-                        {p.paymentNumber}
-                      </td>
-                      <td className="px-5 py-3 text-slate-600">{p.paymentMode}</td>
-                      <td className="px-5 py-3 font-mono text-slate-500">
-                        {p.referenceNumber || "—"}
-                      </td>
-                      <td className="px-5 py-3 text-right font-mono font-bold text-emerald-600">
-                        {formatINR(p.amount)}
-                      </td>
-                      <td className="px-5 py-3 text-center">
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
-                          {p.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Apply Vendor Credit Modal */}
-      {showApplyCreditModal && bill && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl space-y-5 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">Apply Vendor Credit</h3>
-                <p className="text-xs text-slate-500">
-                  Bill #{bill.billNumber} • Vendor: <span className="font-semibold text-slate-700">{bill.vendorName}</span>
-                </p>
-              </div>
+                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+              </Link>
               <button
                 type="button"
-                onClick={() => setShowApplyCreditModal(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+                onClick={() => setShowNewBillMenu((prev) => !prev)}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-1.5 py-1.5 border-l border-blue-500 flex items-center justify-center transition cursor-pointer"
               >
-                <X className="h-5 w-5" />
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+
+              {showNewBillMenu && (
+                <div className="absolute right-0 top-full mt-1.5 w-36 rounded-lg bg-white border border-slate-200 shadow-lg py-1 z-30 text-xs font-medium text-slate-700">
+                  <Link
+                    href="/purchases/bills/new"
+                    onClick={() => setShowNewBillMenu(false)}
+                    className="block px-3 py-1.5 hover:bg-slate-50 transition"
+                  >
+                    New Bill
+                  </Link>
+                </div>
+              )}
+            </div>
+
+            {/* More Options Button [...] */}
+            <button
+              type="button"
+              onClick={() => void loadBillsList()}
+              className="p-1.5 border border-slate-200 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition cursor-pointer"
+              title="Refresh bills list"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Scrollable Bills List */}
+        <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+          {filteredLeftBills.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-400">
+              No bills found for this filter.
+            </div>
+          ) : (
+            filteredLeftBills.map((b) => {
+              const isSelected = b.id === activeBillId;
+              const statusInfo = getBillStatusInfo(b);
+
+              return (
+                <div
+                  key={b.id}
+                  onClick={() => handleSelectBill(b.id)}
+                  className={`px-4 py-3 cursor-pointer transition flex items-start gap-3 select-none ${
+                    isSelected
+                      ? "bg-white border-l-4 border-l-blue-600 shadow-2xs"
+                      : "bg-white hover:bg-slate-50/80 border-l-4 border-l-transparent"
+                  }`}
+                >
+                  {/* Checkbox */}
+                  <div className="pt-0.5" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="rounded border-slate-300 text-blue-600 focus:ring-0 cursor-pointer h-3.5 w-3.5"
+                    />
+                  </div>
+
+                  {/* Main content */}
+                  <div className="flex-1 min-w-0">
+                    {/* Line 1: Vendor Name & Amount */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-slate-900 truncate">
+                        {b.vendorName || "Unknown Vendor"}
+                      </span>
+                      <span className="text-sm font-semibold text-slate-900 tabular-nums shrink-0">
+                        {formatINR(b.total)}
+                      </span>
+                    </div>
+
+                    {/* Line 2: Bill # • Date */}
+                    <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
+                      <span className="font-medium text-slate-600">{b.billNumber}</span>
+                      <span>•</span>
+                      <span>{formatDate(b.billDate)}</span>
+                    </div>
+
+                    {/* Line 3: Status Badge */}
+                    <div className="mt-1">
+                      <span className={`text-[11px] font-bold tracking-wide uppercase ${statusInfo.colorClass}`}>
+                        {statusInfo.label}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </aside>
+
+      {/* ========================================================= */}
+      {/* RIGHT PANE: Selected Bill Document-Style Preview */}
+      {/* ========================================================= */}
+      <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-100/70">
+        {/* Top Header Bar */}
+        <header className="bg-white border-b border-slate-200 shrink-0 px-8 py-3.5 z-10 shadow-2xs">
+          {/* Row 1: Bill Number on left, Icons on right */}
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 font-sans">
+              {bill?.billNumber || "—"}
+            </h1>
+
+            <div className="flex items-center gap-2">
+              {/* Attachment Icon */}
+              <button
+                type="button"
+                onClick={() => setShowAttachmentsDrawer(true)}
+                className="p-1.5 border border-slate-200 hover:bg-slate-50 rounded-md text-slate-500 hover:text-slate-700 transition cursor-pointer relative"
+                title="Attachments"
+              >
+                <Paperclip className="w-4 h-4" />
+                {Boolean(bill?.attachments?.length) && (
+                  <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-blue-600 text-[9px] font-bold text-white">
+                    {bill?.attachments?.length}
+                  </span>
+                )}
+              </button>
+
+              {/* Comments Icon */}
+              <button
+                type="button"
+                onClick={() => setShowCommentsDrawer(true)}
+                className="p-1.5 border border-slate-200 hover:bg-slate-50 rounded-md text-slate-500 hover:text-slate-700 transition cursor-pointer relative"
+                title="Comments & Notes"
+              >
+                <MessageSquare className="w-4 h-4" />
+                {Boolean(bill?.notes) && (
+                  <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-blue-600" />
+                )}
+              </button>
+
+              {/* Red Close Icon */}
+              <button
+                type="button"
+                onClick={handleClose}
+                className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-md transition cursor-pointer"
+                title="Close bill preview"
+              >
+                <X className="w-5 h-5 stroke-[2.5]" />
               </button>
             </div>
+          </div>
 
-            {/* Financial Overview Card */}
-            <div className="grid grid-cols-3 gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-4 text-xs">
-              <div>
-                <span className="text-slate-500">Bill Total</span>
-                <p className="text-sm font-bold text-slate-900 font-mono mt-0.5">{formatINR(bill.total)}</p>
-              </div>
-              <div>
-                <span className="text-slate-500">Current Payment Due</span>
-                <p className="text-sm font-bold text-amber-600 font-mono mt-0.5">{formatINR(bill.balanceDue)}</p>
-              </div>
-              <div>
-                <span className="text-slate-500">Available Credit Balance</span>
-                <p className="text-sm font-bold text-purple-700 font-mono mt-0.5">
-                  {formatINR(availableCredits.reduce((s, c) => s + c.balanceRemaining, 0))}
-                </p>
-              </div>
-            </div>
-
-            {creditError && (
-              <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
-                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                <span>{creditError}</span>
-              </div>
+          {/* Row 2: Action Toolbar (Edit, PDF/Print ▾, Record Payment ▾, ...) */}
+          <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-2">
+            {/* Edit Button */}
+            {bill && (
+              <Link
+                href={`/purchases/bills/${bill.id}/edit`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md shadow-2xs transition"
+              >
+                <Pencil className="w-3.5 h-3.5 text-slate-600" />
+                <span>Edit</span>
+              </Link>
             )}
 
-            {availableCredits.length === 0 ? (
-              <div className="rounded-xl border border-slate-200 bg-white p-8 text-center space-y-3">
-                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-                  <CreditCard className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">No Open Vendor Credits Available</p>
-                  <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                    There are no open or partially applied vendor credits for <span className="font-semibold">{bill.vendorName}</span>. Credits must belong to this vendor and have an available remaining balance.
-                  </p>
-                </div>
-                <div className="pt-2">
+            {/* PDF/Print ▾ Dropdown */}
+            <div className="relative" ref={pdfMenuRef}>
+              <button
+                type="button"
+                onClick={() => setShowPdfMenu((prev) => !prev)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md shadow-2xs transition cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5 text-slate-600" />
+                <span>PDF/Print</span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+
+              {showPdfMenu && (
+                <div className="absolute left-0 top-full mt-1 w-36 rounded-lg bg-white border border-slate-200 shadow-lg py-1 z-30 text-xs font-medium text-slate-700">
                   <button
                     type="button"
-                    onClick={() => setShowApplyCreditModal(false)}
-                    className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                    onClick={() => {
+                      setShowPdfMenu(false);
+                      handleDownloadPdf();
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-slate-50 transition flex items-center gap-2 cursor-pointer"
                   >
-                    Close
+                    <Download className="w-3 h-3 text-slate-500" />
+                    <span>Download PDF</span>
                   </button>
-                </div>
-              </div>
-            ) : (
-              <form onSubmit={handleApplyCreditsSubmit} className="space-y-4">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-700">
-                    Available Credits for {bill.vendorName} ({availableCredits.length})
-                  </span>
                   <button
                     type="button"
-                    onClick={handleApplyAllCredits}
-                    className="text-xs font-semibold text-purple-600 hover:text-purple-700 underline cursor-pointer"
+                    onClick={() => {
+                      setShowPdfMenu(false);
+                      window.print();
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-slate-50 transition flex items-center gap-2 cursor-pointer"
                   >
-                    Auto-Fill Max Applicable
+                    <Printer className="w-3 h-3 text-slate-500" />
+                    <span>Print</span>
                   </button>
+                </div>
+              )}
+            </div>
+
+            {/* Record Payment ▾ Button */}
+            {bill && bill.balanceDue > 0 && bill.status !== "Draft" && bill.status !== "Void" && (
+              <button
+                type="button"
+                onClick={handleOpenPayment}
+                className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md shadow-2xs transition cursor-pointer"
+              >
+                <CreditCard className="w-3.5 h-3.5 text-slate-600" />
+                <span>Record Payment</span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+            )}
+
+            {/* ... More Button */}
+            <div className="relative" ref={moreMenuRef}>
+              <button
+                type="button"
+                onClick={() => setShowMoreActionsMenu((prev) => !prev)}
+                className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-md shadow-2xs transition cursor-pointer"
+                title="More actions"
+              >
+                <MoreHorizontal className="w-4 h-4" />
+              </button>
+
+              {showMoreActionsMenu && (
+                <div className="absolute left-0 top-full mt-1 w-44 rounded-lg bg-white border border-slate-200 shadow-lg py-1 z-30 text-xs font-medium text-slate-700">
+                  {bill && availableCredits.length > 0 && bill.balanceDue > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMoreActionsMenu(false);
+                        handleOpenApplyCredit();
+                      }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-slate-50 transition flex items-center gap-2 text-purple-700 cursor-pointer"
+                    >
+                      <CreditCard className="w-3 h-3 text-purple-600" />
+                      <span>Apply Vendor Credit</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreActionsMenu(false);
+                      setShowDeleteModal(true);
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-rose-50 transition flex items-center gap-2 text-rose-600 cursor-pointer"
+                  >
+                    <Trash2 className="w-3 h-3 text-rose-500" />
+                    <span>Delete Bill</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* Feedback Notices */}
+        {notice && (
+          <div className="mx-8 mt-4 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-800">
+            <span>{notice}</span>
+            <button type="button" onClick={() => setNotice(null)}>
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        {error && (
+          <div className="mx-8 mt-4 flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-800">
+            <span>{error}</span>
+            <button type="button" onClick={() => setError(null)}>
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Document Canvas Container */}
+        <div className="flex-1 overflow-y-auto px-6 py-8">
+          {loadingBill ? (
+            <div className="flex h-96 flex-col items-center justify-center gap-3">
+              <Loader2 className="h-7 w-7 animate-spin text-blue-600" />
+              <p className="text-xs text-slate-500">Loading bill preview…</p>
+            </div>
+          ) : !bill ? (
+            <div className="max-w-xl mx-auto my-12 p-8 bg-white border border-slate-200 rounded-xl text-center space-y-2">
+              <AlertCircle className="w-8 h-8 text-rose-500 mx-auto" />
+              <h3 className="text-sm font-bold text-slate-900">Bill Not Found</h3>
+              <p className="text-xs text-slate-500">The selected bill could not be retrieved from the database.</p>
+            </div>
+          ) : (
+            /* ========================================================= */
+            /* DOCUMENT PREVIEW SHEET (ZOHO BOOKS STYLE) */
+            /* ========================================================= */
+            <div className="max-w-[850px] mx-auto bg-white border border-slate-200/90 shadow-xs p-10 sm:p-14 text-slate-800 text-xs min-h-[780px] flex flex-col justify-between">
+              <div>
+                {/* Document Top: Bill From on Left, Metadata on Right */}
+                <div className="flex flex-wrap items-start justify-between gap-6">
+                  {/* Left: Bill From */}
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-slate-600">Bill From</p>
+                    <Link
+                      href={`/purchases/vendors/${bill.vendorId}`}
+                      className="text-sm font-semibold text-blue-600 hover:underline block"
+                    >
+                      {bill.vendorName}
+                    </Link>
+                  </div>
+
+                  {/* Right: Key-Value Metadata aligned */}
+                  <div className="space-y-1.5 text-xs text-slate-700 font-sans">
+                    <div className="flex items-center justify-end gap-4">
+                      <span className="text-slate-600 font-medium w-28 text-right">Order Number :</span>
+                      <span className="text-slate-900 font-medium w-28 text-right font-mono">
+                        {bill.orderNumber || "—"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-4">
+                      <span className="text-slate-600 font-medium w-28 text-right">Bill Date :</span>
+                      <span className="text-slate-900 font-medium w-28 text-right font-mono">
+                        {formatDate(bill.billDate)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-4">
+                      <span className="text-slate-600 font-medium w-28 text-right">Due Date :</span>
+                      <span className="text-slate-900 font-medium w-28 text-right font-mono">
+                        {formatDate(bill.dueDate)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-4">
+                      <span className="text-slate-600 font-medium w-28 text-right">Terms :</span>
+                      <span className="text-slate-900 font-medium w-28 text-right">
+                        {bill.paymentTerms || "Custom"}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="overflow-hidden rounded-xl border border-slate-200">
-                  <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
-                    <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                      <tr>
-                        <th className="px-4 py-2.5">Credit Note #</th>
-                        <th className="px-4 py-2.5">Date</th>
-                        <th className="px-4 py-2.5 text-right">Total Credit</th>
-                        <th className="px-4 py-2.5 text-right">Available Balance</th>
-                        <th className="px-4 py-2.5 text-right w-48">Amount to Apply (₹)</th>
+                {/* Items Table */}
+                <div className="mt-10 overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-[#333333] text-white text-[11px] font-semibold">
+                        <th className="py-2.5 px-3 w-8 text-center">#</th>
+                        <th className="py-2.5 px-3 font-semibold">Item & Description</th>
+                        <th className="py-2.5 px-3 font-semibold">Customer Details</th>
+                        <th className="py-2.5 px-3 text-right font-semibold">Qty</th>
+                        <th className="hidden">Unit</th>
+                        <th className="py-2.5 px-3 text-right font-semibold">Rate</th>
+                        <th className="py-2.5 px-3 text-right font-semibold">Amount</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {availableCredits.map((cred) => (
-                        <tr key={cred.id} className="hover:bg-slate-50/50">
-                          <td className="px-4 py-3 font-mono font-semibold text-purple-700">
-                            {cred.creditNoteNumber}
+                    <tbody className="divide-y divide-slate-200">
+                      {bill.items.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/40">
+                          {/* Row Index */}
+                          <td className="py-3 px-3 text-center text-slate-500 font-mono">
+                            {idx + 1}
                           </td>
-                          <td className="px-4 py-3 font-mono text-slate-500 whitespace-nowrap">
-                            {formatDate(cred.vendorCreditDate)}
-                          </td>
-                          <td className="px-4 py-3 text-right font-mono text-slate-600">
-                            {formatINR(cred.total)}
-                          </td>
-                          <td className="px-4 py-3 text-right font-mono font-bold text-emerald-600">
-                            {formatINR(cred.balanceRemaining)}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                max={Math.min(cred.balanceRemaining, bill.balanceDue)}
-                                placeholder="0.00"
-                                value={creditAmounts[cred.id] ?? ""}
-                                onChange={(e) =>
-                                  setCreditAmounts((prev) => ({
-                                    ...prev,
-                                    [cred.id]: e.target.value,
-                                  }))
-                                }
-                                className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-right font-mono text-xs font-semibold outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleSetMaxCredit(cred.id)}
-                                className="rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-purple-700 hover:bg-purple-100 transition cursor-pointer"
-                                title="Apply maximum allowable from this credit note"
-                              >
-                                Max
-                              </button>
+
+                          {/* Item & Description */}
+                          <td className="py-3 px-3">
+                            <div className="font-bold text-slate-900 text-xs">
+                              {item.name}
                             </div>
+                            {item.description && (
+                              <div className="text-[11px] text-slate-500 mt-0.5 whitespace-pre-line">
+                                {item.description}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Customer Details */}
+                          <td className="py-3 px-3 text-slate-700">
+                            {item.customerName ? (
+                              <div>
+                                <div className="flex items-center gap-1 font-medium text-slate-800">
+                                  <User className="w-3 h-3 text-slate-400 shrink-0" />
+                                  <span className="truncate">{item.customerName}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  Non-Billable
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-300">—</span>
+                            )}
+                          </td>
+
+                          {/* Qty & Unit */}
+                          <td className="py-3 px-3 text-right tabular-nums">
+                            <span className="hidden">{item.quantity}</span>
+                            <div className="font-semibold text-slate-900">
+                              {Number(item.quantity || 0).toLocaleString("en-IN", {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              {item.unit || "—"}
+                            </div>
+                          </td>
+                          <td className="hidden">{item.unit || "—"}</td>
+
+                          {/* Rate */}
+                          <td className="py-3 px-3 text-right tabular-nums text-slate-800">
+                            {formatINR(item.rate)}
+                          </td>
+
+                          {/* Amount */}
+                          <td className="py-3 px-3 text-right tabular-nums font-semibold text-slate-900">
+                            {Number(item.amount || 0).toLocaleString("en-IN", {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
                           </td>
                         </tr>
                       ))}
@@ -1214,155 +1022,161 @@ export function BillDetailView({ id }: { id: string }) {
                   </table>
                 </div>
 
-                {/* Summary calculation */}
-                <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-4 space-y-2 text-xs">
-                  <div className="flex justify-between items-center text-slate-600">
-                    <span>Total Credit to Apply:</span>
-                    <span className="font-mono font-bold text-purple-700">
-                      {formatINR(totalCreditApplying)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-slate-600">
-                    <span>Remaining Payment Due After Application:</span>
-                    <span className="font-mono font-bold text-slate-900">
-                      {formatINR(remainingDueAfterCredit)}
-                    </span>
-                  </div>
-                </div>
+                {/* Sub Total, Total & Balance Due Block */}
+                <div className="mt-8 flex justify-end">
+                  <div className="w-72 space-y-2 text-xs">
+                    {/* Sub Total */}
+                    <div className="flex justify-between items-center py-1 text-slate-700">
+                      <span>Sub Total</span>
+                      <span className="font-semibold tabular-nums">
+                        {Number(bill.subTotal || 0).toLocaleString("en-IN", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    </div>
 
-                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => setShowApplyCreditModal(false)}
-                    disabled={applyingCredits}
-                    className="rounded-xl border border-slate-200 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 transition text-xs"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={applyingCredits || totalCreditApplying <= 0}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-4 py-2 font-semibold text-white shadow-sm hover:bg-purple-700 disabled:opacity-50 transition text-xs cursor-pointer"
-                  >
-                    {applyingCredits && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                    Apply Credit ({formatINR(totalCreditApplying)})
-                  </button>
+                    {/* Discount */}
+                    {bill.discountAmount > 0 && (
+                      <div className="flex justify-between items-center py-1 text-slate-700">
+                        <span>Discount {bill.discountType === "percent" ? `(${bill.discount}%)` : ""}</span>
+                        <span className="font-semibold text-rose-600 tabular-nums">
+                          -{formatINR(bill.discountAmount)}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Tax */}
+                    {bill.taxAmount > 0 && (
+                      <div className="flex justify-between items-center py-1 text-slate-700">
+                        <span>Tax ({bill.taxRate}%)</span>
+                        <span className="font-semibold tabular-nums">{formatINR(bill.taxAmount)}</span>
+                      </div>
+                    )}
+
+                    {/* Adjustment */}
+                    {bill.adjustment !== 0 && (
+                      <div className="flex justify-between items-center py-1 text-slate-700">
+                        <span>Adjustment</span>
+                        <span className="font-semibold tabular-nums">{formatINR(bill.adjustment)}</span>
+                      </div>
+                    )}
+
+                    {/* Total */}
+                    <div className="flex justify-between items-center py-1.5 text-sm font-bold text-slate-900 border-t border-slate-200">
+                      <span>Total</span>
+                      <span className="tabular-nums">{formatINR(bill.total)}</span>
+                    </div>
+
+                    {/* Shaded Balance Due Row (Zoho Books Style) */}
+                    <div className="bg-slate-100 p-2.5 rounded-xs flex justify-between items-center text-sm font-bold text-slate-900 mt-2">
+                      <span>Balance Due</span>
+                      <span className="tabular-nums">{formatINR(bill.balanceDue)}</span>
+                    </div>
+                  </div>
                 </div>
-              </form>
-            )}
-          </div>
+              </div>
+
+              {/* Bottom: Authorized Signature */}
+              <div className="mt-24 pt-6 text-xs text-slate-500 font-medium">
+                Authorized Signature _____________________
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </main>
 
-      {/* Record Payment Modal */}
-      {showPaymentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl space-y-5">
+      {/* ========================================================= */}
+      {/* MODAL: Record Payment */}
+      {/* ========================================================= */}
+      {showPaymentModal && bill && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-lg font-bold text-slate-900">Record Vendor Payment</h3>
-                <p className="text-xs text-slate-500">
-                  Bill #{bill.billNumber} • {bill.vendorName}
-                </p>
+                <h3 className="text-base font-bold text-slate-900">Record Payment</h3>
+                <p className="text-xs text-slate-500">Bill #{bill.billNumber} • {bill.vendorName}</p>
               </div>
               <button
                 type="button"
                 onClick={() => setShowPaymentModal(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             <form onSubmit={handleRecordPayment} className="space-y-4 text-xs">
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3.5 flex justify-between items-center">
-                <div>
-                  <span className="text-slate-500">Total Bill Amount:</span>
-                  <p className="text-sm font-bold text-slate-900">{formatINR(bill.total)}</p>
-                </div>
-                <div className="text-right">
-                  <span className="text-slate-500">Current Balance Due:</span>
-                  <p className="text-sm font-bold text-amber-600">{formatINR(bill.balanceDue)}</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Amount Paid (₹) *
-                  </label>
-                  <input
-                    required
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    max={bill.balanceDue}
-                    value={paymentAmount}
-                    onChange={(e) => setPaymentAmount(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Payment Date *
-                  </label>
-                  <input
-                    required
-                    type="date"
-                    value={paymentDate}
-                    onChange={(e) => setPaymentDate(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Payment Mode *
-                  </label>
-                  <select
-                    value={paymentMode}
-                    onChange={(e) => setPaymentMode(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-500 bg-white"
-                  >
-                    <option value="Bank Transfer">Bank Transfer / NEFT / RTGS</option>
-                    <option value="Cheque">Cheque</option>
-                    <option value="Cash">Cash</option>
-                    <option value="UPI">UPI</option>
-                    <option value="Credit Card">Credit Card</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Reference / UTR #
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. UTR-98214"
-                    value={paymentReference}
-                    onChange={(e) => setPaymentReference(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-500"
-                  />
-                </div>
+              <div className="rounded-xl bg-slate-50 p-3 flex justify-between text-xs font-semibold">
+                <span className="text-slate-500">Current Balance Due:</span>
+                <span className="text-slate-900">{formatINR(bill.balanceDue)}</span>
               </div>
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
-                  Paid Through Account
+                  Payment Amount (₹) <span className="text-rose-500">*</span>
                 </label>
-                <select
-                  value={paidThrough}
-                  onChange={(e) => setPaidThrough(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-500 bg-white"
-                >
-                  <option value="HDFC Operational Bank">HDFC Operational Bank</option>
-                  <option value="ICICI Current Account">ICICI Current Account</option>
-                  <option value="SBI Corporate Account">SBI Corporate Account</option>
-                  <option value="Petty Cash">Petty Cash</option>
-                </select>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  max={bill.balanceDue}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Payment Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Payment Mode</label>
+                  <select
+                    value={paymentMode}
+                    onChange={(e) => setPaymentMode(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
+                  >
+                    <option value="Bank Transfer">Bank Transfer (NEFT/RTGS/IMPS)</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Cheque">Cheque</option>
+                    <option value="UPI">UPI</option>
+                    <option value="Credit Card">Credit Card</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Paid Through Account</label>
+                  <input
+                    type="text"
+                    value={paidThrough}
+                    onChange={(e) => setPaidThrough(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Reference / UTR #</label>
+                  <input
+                    type="text"
+                    value={paymentReference}
+                    onChange={(e) => setPaymentReference(e.target.value)}
+                    placeholder="UTR-992837..."
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
+                  />
+                </div>
               </div>
 
               <div>
@@ -1371,26 +1185,25 @@ export function BillDetailView({ id }: { id: string }) {
                   rows={2}
                   value={paymentNotes}
                   onChange={(e) => setPaymentNotes(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 p-2.5 text-xs outline-none focus:border-blue-500"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setShowPaymentModal(false)}
-                  disabled={submittingPayment}
-                  className="rounded-xl border border-slate-200 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 transition"
+                  className="rounded-xl border border-slate-200 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submittingPayment}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700 disabled:opacity-60 cursor-pointer"
                 >
                   {submittingPayment && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Save Payment
+                  Record Payment
                 </button>
               </div>
             </form>
@@ -1398,49 +1211,238 @@ export function BillDetailView({ id }: { id: string }) {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-100 text-rose-600">
-                <Trash2 className="h-5 w-5" />
-              </div>
+      {/* ========================================================= */}
+      {/* MODAL: Apply Vendor Credit */}
+      {/* ========================================================= */}
+      {showCreditModal && bill && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Delete Purchase Bill</h3>
-                <p className="text-xs text-slate-500">
-                  Are you sure you want to delete Bill #{bill.billNumber}?
-                </p>
+                <h3 className="text-base font-bold text-slate-900">Apply Vendor Credit</h3>
+                <p className="text-xs text-slate-500">Bill #{bill.billNumber} • {bill.vendorName}</p>
               </div>
+              <button
+                type="button"
+                onClick={() => setShowCreditModal(false)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
 
-            {bill.amountPaid > 0 && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                <p className="font-semibold">Warning: Payment Recorded</p>
-                <p className="mt-0.5">
-                  This bill already has payments of {formatINR(bill.amountPaid)} recorded against
-                  it. You must delete the recorded payments first before deleting this bill.
-                </p>
+            <form onSubmit={handleApplyCredit} className="space-y-4 text-xs">
+              <div className="rounded-xl bg-purple-50 p-3 flex justify-between text-xs font-semibold text-purple-900">
+                <span>Bill Balance Due:</span>
+                <span>{formatINR(bill.balanceDue)}</span>
               </div>
-            )}
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Select Credit Note</label>
+                <select
+                  value={selectedCreditId}
+                  onChange={(e) => {
+                    setSelectedCreditId(e.target.value);
+                    const found = availableCredits.find((c) => c.id === e.target.value);
+                    if (found) {
+                      setCreditAmountToApply(String(Math.min(bill.balanceDue, found.balanceRemaining)));
+                    }
+                  }}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:border-blue-500 font-medium"
+                >
+                  {availableCredits.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.creditNoteNumber} — Available: {formatINR(c.balanceRemaining)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Amount to Apply (₹)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  value={creditAmountToApply}
+                  onChange={(e) => setCreditAmountToApply(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowCreditModal(false)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={applyingCredit}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-4 py-2 font-semibold text-white hover:bg-purple-700 disabled:opacity-60 cursor-pointer"
+                >
+                  {applyingCredit && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Apply Credit
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: Delete Confirmation */}
+      {/* ========================================================= */}
+      {showDeleteModal && bill && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-50">
+                <AlertCircle className="h-6 w-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Delete Bill?</h3>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to delete <span className="font-semibold text-slate-800">Bill #{bill.billNumber}</span>?
+              This will remove this record and reverse any recorded purchase inventory movements.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setShowDeleteModal(false)}
-                disabled={deleting}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleDelete}
-                disabled={deleting || bill.amountPaid > 0}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-rose-700 disabled:opacity-50 transition"
+                disabled={deleting}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60 cursor-pointer"
               >
                 {deleting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Delete Bill
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* DRAWER / MODAL: Attachments */}
+      {/* ========================================================= */}
+      {showAttachmentsDrawer && bill && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Paperclip className="w-4 h-4 text-blue-600" />
+                <h3 className="text-base font-bold text-slate-900">Attachments ({bill.attachments?.length || 0})</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAttachmentsDrawer(false)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 max-h-72 overflow-y-auto">
+              {!bill.attachments || bill.attachments.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-6">No files attached to this bill.</p>
+              ) : (
+                bill.attachments.map((file, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 text-xs"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <FileCheck className="w-4 h-4 text-blue-600 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-800 truncate">{file.name}</p>
+                        <p className="text-[10px] text-slate-400">{formatFileSize(file.size)}</p>
+                      </div>
+                    </div>
+                    {file.dataUrl && (
+                      <a
+                        href={file.dataUrl}
+                        download={file.name}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 shrink-0"
+                      >
+                        <Download className="w-3 h-3" />
+                        Download
+                      </a>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowAttachmentsDrawer(false)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* DRAWER / MODAL: Comments / Notes */}
+      {/* ========================================================= */}
+      {showCommentsDrawer && bill && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-blue-600" />
+                <h3 className="text-base font-bold text-slate-900">Notes & Comments</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCommentsDrawer(false)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div>
+                <p className="font-bold text-slate-700 uppercase tracking-wider text-[10px] mb-1">Customer Notes / Memo</p>
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 whitespace-pre-wrap min-h-16">
+                  {bill.notes || "No notes recorded for this bill."}
+                </div>
+              </div>
+
+              {bill.termsAndConditions && (
+                <div>
+                  <p className="font-bold text-slate-700 uppercase tracking-wider text-[10px] mb-1">Terms & Conditions</p>
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 whitespace-pre-wrap">
+                    {bill.termsAndConditions}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowCommentsDrawer(false)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>

@@ -205,6 +205,14 @@ export function NewCreditNoteForm({
     resolvedInitialData.termsAndConditions || "",
   );
 
+  // Physical return & inventory integration
+  const [isPhysicalReturn, setIsPhysicalReturn] = useState<boolean>(false);
+  const [goodsCondition, setGoodsCondition] = useState<"usable" | "damaged">("usable");
+  const [stockLocationType, setStockLocationType] = useState<"Warehouse" | "Shop">("Warehouse");
+  const [stockLocationId, setStockLocationId] = useState<string>("");
+  const [stockLocationName, setStockLocationName] = useState<string>("");
+  const [locations, setLocations] = useState<Array<{ id: string; name: string; type: "Warehouse" | "Shop"; code?: string }>>([]);
+
   // Submission State
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -217,9 +225,23 @@ export function NewCreditNoteForm({
       fetch("/api/sales?section=customers").then((r) => (r.ok ? r.json() : { customers: [] })),
       fetch("/api/items").then((r) => (r.ok ? r.json() : { items: [] })),
       fetch("/api/sales/credit-notes/preferences").then((r) => (r.ok ? r.json() : null)),
+      fetch("/api/inventory/locations").then((r) => (r.ok ? r.json() : { locations: [] })),
     ])
-      .then(([custData, itemsData, prefData]) => {
+      .then(([custData, itemsData, prefData, locData]) => {
         if (!isMounted) return;
+
+        const locs = locData.locations || [];
+        setLocations(locs);
+        const firstWh = locs.find((l: { id: string; name: string; type: string }) => l.type === "Warehouse");
+        if (firstWh) {
+          setStockLocationType("Warehouse");
+          setStockLocationId(firstWh.id);
+          setStockLocationName(firstWh.name);
+        } else if (locs.length > 0) {
+          setStockLocationType(locs[0].type);
+          setStockLocationId(locs[0].id);
+          setStockLocationName(locs[0].name);
+        }
 
         const custOptions: CustomerOption[] = (custData.customers || []).map((c: Record<string, unknown>) => ({
           id: String(c.id || c._id || ""),
@@ -426,6 +448,11 @@ export function NewCreditNoteForm({
       return;
     }
 
+    if (isPhysicalReturn && !stockLocationId) {
+      setError("Please select a destination stock location (Warehouse or Shop) for the returned physical goods.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const payload = {
@@ -437,6 +464,11 @@ export function NewCreditNoteForm({
         accountsReceivable,
         salesperson,
         subject,
+        isPhysicalReturn,
+        goodsCondition: isPhysicalReturn ? goodsCondition : undefined,
+        stockLocationType: isPhysicalReturn ? stockLocationType : undefined,
+        stockLocationId: isPhysicalReturn ? stockLocationId : undefined,
+        stockLocationName: isPhysicalReturn ? (stockLocationName || locations.find((l) => l.id === stockLocationId)?.name || "") : undefined,
         status: targetStatus,
         items: validItems.map((it) => ({
           itemId: it.itemId,
@@ -761,6 +793,134 @@ export function NewCreditNoteForm({
               />
             </div>
           </div>
+        </div>
+
+        {/* Physical Goods Return (Inventory Integration) Card */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Inventory Sales Return</h3>
+              <p className="text-xs text-slate-500">
+                Track physical goods returned into inventory vs purely financial credits
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isPhysicalReturn}
+                onChange={(e) => setIsPhysicalReturn(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              <span className="ml-3 text-xs font-semibold text-slate-700">
+                Physical Goods Returned
+              </span>
+            </label>
+          </div>
+
+          {isPhysicalReturn && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-800">
+                  Goods Condition <span className="text-rose-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setGoodsCondition("usable")}
+                    className={`py-2 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                      goodsCondition === "usable"
+                        ? "border-emerald-600 bg-emerald-50 text-emerald-800 font-bold ring-2 ring-emerald-100"
+                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    ✨ Usable (Restock)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGoodsCondition("damaged")}
+                    className={`py-2 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                      goodsCondition === "damaged"
+                        ? "border-rose-600 bg-rose-50 text-rose-800 font-bold ring-2 ring-rose-100"
+                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    ⚠️ Damaged Stock
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  {goodsCondition === "usable"
+                    ? "Restocks returned goods to sellable On Hand inventory."
+                    : "Records goods directly into damaged stock ledger."}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-800">
+                  Return Destination Location <span className="text-rose-500">*</span>
+                </label>
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStockLocationType("Warehouse");
+                        const firstWh = locations.find((l) => l.type === "Warehouse");
+                        if (firstWh) {
+                          setStockLocationId(firstWh.id);
+                          setStockLocationName(firstWh.name);
+                        }
+                      }}
+                      className={`py-1.5 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                        stockLocationType === "Warehouse"
+                          ? "border-blue-600 bg-blue-50 text-blue-700"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      🏢 Warehouse
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStockLocationType("Shop");
+                        const firstShop = locations.find((l) => l.type === "Shop");
+                        if (firstShop) {
+                          setStockLocationId(firstShop.id);
+                          setStockLocationName(firstShop.name);
+                        }
+                      }}
+                      className={`py-1.5 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                        stockLocationType === "Shop"
+                          ? "border-blue-600 bg-blue-50 text-blue-700"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      🏪 Shop
+                    </button>
+                  </div>
+                  <select
+                    value={stockLocationId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setStockLocationId(id);
+                      const found = locations.find((l) => l.id === id);
+                      setStockLocationName(found ? found.name : "");
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs sm:text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                  >
+                    <option value="">Select destination {stockLocationType}...</option>
+                    {locations
+                      .filter((l) => l.type === stockLocationType)
+                      .map((loc) => (
+                        <option key={loc.id} value={loc.id}>
+                          {loc.name} {loc.code ? `(${loc.code})` : ""}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Item Table Card */}

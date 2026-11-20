@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   ArrowRightLeft,
   BarChart3,
+  Boxes,
   Building2,
   Calculator,
   ChevronDown,
@@ -44,6 +45,15 @@ const marketplaceNavigation = [
   { href: "/marketplace/buying-requests", label: "Buying Request" },
 ];
 
+const inventoryNavigation = [
+  { href: "/items", label: "Commodity" },
+  { href: "/sales/warehouses", label: "Warehouse" },
+  { href: "/inventory/warehouse", label: "Warehouse Stock" },
+  { href: "/inventory/shop", label: "Shop Stock" },
+  { href: "/inventory/reports", label: "Inventory Report" },
+  { href: "/inventory/transfers", label: "Stock Transfers" },
+];
+
 const purchasesNavigation = [
   { href: "/purchases/vendors", label: "Vendors" },
   { href: "/purchases/vendor-ledger", label: "Vendor Ledger" },
@@ -66,7 +76,6 @@ const salesNavigation = [
   { href: "/sales/recurring-invoices", label: "Recurring Invoices" },
   { href: "/sales/delivery-challans", label: "Delivery Challans" },
   { href: "/sales/credit-notes", label: "Credit Notes" },
-  { href: "/sales/warehouses", label: "Warehouses" },
   { href: "/sales/stock", label: "Stock Lots" },
 ];
 
@@ -83,6 +92,7 @@ export function AppShell({
   const [salesExpanded, setSalesExpanded] = useState(true);
   const [purchasesExpanded, setPurchasesExpanded] = useState(true);
   const [marketplaceExpanded, setMarketplaceExpanded] = useState(true);
+  const [inventoryExpanded, setInventoryExpanded] = useState(true);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
   const [orgInitial, setOrgInitial] = useState<string>("");
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -336,23 +346,62 @@ export function AppShell({
               )}
             </div>
 
-            {/* Items */}
-            <Link
-              href="/items"
-              prefetch={true}
-              onClick={() => handleNav("/items")}
-              title={sidebarCollapsed ? "Commodity" : undefined}
-              className={`flex items-center gap-3 rounded-xl py-2 text-sm font-medium transition ${
-                sidebarCollapsed ? "justify-center px-2" : "px-3"
-              } ${
-                pathname === "/items" || pathname.startsWith("/items")
-                  ? "bg-[#FF8C00] text-white shadow-sm"
-                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
-              }`}
-            >
-              <Package className="h-4 w-4 shrink-0" />
-              {!sidebarCollapsed && <span>Commodity</span>}
-            </Link>
+            {/* Inventory Module */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setInventoryExpanded((expanded) => !expanded)}
+                title={sidebarCollapsed ? "Inventory" : undefined}
+                aria-label={inventoryExpanded ? "Collapse Inventory menu" : "Expand Inventory menu"}
+                aria-expanded={inventoryExpanded}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm font-medium transition cursor-pointer ${
+                  pathname.startsWith("/inventory") ||
+                  pathname === "/items" ||
+                  pathname.startsWith("/items") ||
+                  pathname.startsWith("/sales/warehouses")
+                    ? "bg-slate-800 text-white"
+                    : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Boxes className="h-4 w-4" />
+                  {!sidebarCollapsed && <span>Inventory</span>}
+                </div>
+                {!sidebarCollapsed && (
+                  <ChevronDown className={`h-4 w-4 transition-transform ${inventoryExpanded ? "rotate-180" : ""}`} />
+                )}
+              </button>
+              {inventoryExpanded && !sidebarCollapsed && (
+                <div className="mt-1 space-y-1 pl-7">
+                  {inventoryNavigation.map(({ href, label }) => {
+                    const isActive =
+                      (href === "/items" && (pathname === "/items" || pathname.startsWith("/items"))) ||
+                      (href === "/sales/warehouses" &&
+                        (pathname === "/sales/warehouses" || pathname.startsWith("/sales/warehouses")));
+
+                    return (
+                      <div
+                        key={href}
+                        className={`flex items-center rounded-lg transition ${
+                          isActive
+                            ? "bg-[#FF8C00] font-medium text-white shadow-sm"
+                            : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                        }`}
+                      >
+                        <Link
+                          href={href}
+                          prefetch={true}
+                          onClick={() => handleNav(href)}
+                          className="flex-1 px-3 py-2 text-sm"
+                        >
+                          {label}
+                        </Link>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             {/* Sales Module */}
             <div>
@@ -363,7 +412,9 @@ export function AppShell({
                 aria-label={salesExpanded ? "Collapse Sales menu" : "Expand Sales menu"}
                 aria-expanded={salesExpanded}
                 className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm font-medium transition cursor-pointer ${
-                  pathname.startsWith("/sales")
+                  pathname.startsWith("/sales") &&
+                  !pathname.startsWith("/sales/warehouses") &&
+                  !pathname.startsWith("/sales/traders")
                     ? "bg-slate-800 text-white"
                     : "text-slate-300 hover:bg-slate-800 hover:text-white"
                 }`}
@@ -385,7 +436,6 @@ export function AppShell({
                       (href === "/sales/quotes" && pathname.startsWith("/sales/quotes/")) ||
                       (href === "/sales/orders" && pathname.startsWith("/sales/orders")) ||
                       (href === "/sales/delivery-challans" && pathname.startsWith("/sales/delivery-challans")) ||
-                      (href === "/sales/warehouses" && pathname.startsWith("/sales/warehouses")) ||
                       (href === "/sales/payments" && (pathname.startsWith("/sales/payments") || pathname.startsWith("/sales/payments-received"))) ||
                       (href === "/sales/invoices" && (pathname.startsWith("/sales/invoices") || pathname.startsWith("/invoices")));
 

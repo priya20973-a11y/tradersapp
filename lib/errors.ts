@@ -184,3 +184,25 @@ export function isTransientTransactionError(error: unknown): boolean {
     ("errorLabels" in error && Array.isArray((error as { errorLabels: string[] }).errorLabels) &&
       (error as { errorLabels: string[] }).errorLabels.includes("TransientTransactionError"));
 }
+
+/** Type guard: indicates that MongoDB is running in standalone mode where multi-document transactions are not supported. */
+export function isReplicaSetNotSupportedError(error: unknown): boolean {
+  if (!error) return false;
+  if (typeof error === "object") {
+    const errObj = error as Record<string, unknown>;
+    const errorResponse = errObj.errorResponse as Record<string, unknown> | undefined;
+
+    if (errObj.code === 20 || errorResponse?.code === 20) return true;
+    if (errObj.codeName === "IllegalOperation" || errorResponse?.codeName === "IllegalOperation") return true;
+
+    const msg = String(errObj.message || errObj.errmsg || errorResponse?.errmsg || "");
+    return /Transaction numbers are only allowed|transactions are not supported|standalone servers do not support transactions|replica set/i.test(
+      msg,
+    );
+  } else if (typeof error === "string") {
+    return /Transaction numbers are only allowed|transactions are not supported|standalone servers do not support transactions|replica set/i.test(
+      error,
+    );
+  }
+  return false;
+}

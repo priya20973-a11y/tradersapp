@@ -130,6 +130,13 @@ export function SalesOrderDetailModal({
 
             <div className="grid grid-cols-2 gap-3 text-xs border-t sm:border-t-0 sm:border-l border-slate-200/80 pt-3 sm:pt-0 sm:pl-4">
               <div>
+                <span className="text-slate-500 block">Stock Location</span>
+                <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5">
+                  <span>{order.stockLocationType === "Shop" ? "🏪" : "🏢"}</span>
+                  {order.stockLocationName || (order.stockLocationType ? `${order.stockLocationType}` : "—")}
+                </span>
+              </div>
+              <div>
                 <span className="text-slate-500 block">Expected Shipment</span>
                 <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5">
                   <Calendar className="h-3 w-3 text-slate-400" />

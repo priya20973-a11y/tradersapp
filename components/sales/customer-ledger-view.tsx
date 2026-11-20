@@ -206,11 +206,15 @@ export function CustomerLedgerView() {
                   onChange={(e) => setSelectedCustomerId(e.target.value)}
                   className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition cursor-pointer"
                 >
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} {c.companyName ? `(${c.companyName})` : ""}
-                    </option>
-                  ))}
+                  {customers.length === 0 ? (
+                    <option value="">No customers found</option>
+                  ) : (
+                    customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.companyName ? `(${c.companyName})` : ""}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
             </div>

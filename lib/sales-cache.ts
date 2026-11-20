@@ -11,7 +11,7 @@ type CacheEntry<T> = {
 
 const salesCache = new Map<string, CacheEntry<unknown>>();
 const inFlightRequests = new Map<string, Promise<unknown>>();
-const DEFAULT_TTL_MS = 30_000; // 30 seconds cache freshness
+const DEFAULT_TTL_MS = 2_000; // Short 2 seconds deduplication for rapid tab clicks
 
 export async function fetchCachedSales<T = unknown>(
   query: string = "",

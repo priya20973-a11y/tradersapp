@@ -5,6 +5,7 @@ export interface BillItemInput {
   description?: string;
   account: string;
   quantity: number;
+  unit?: string;
   rate: number;
   taxRate?: number;
   taxAmount?: number;
@@ -122,6 +123,7 @@ export function calculateBillTotals({
     return {
       ...item,
       quantity: qty,
+      unit: item.unit ? String(item.unit).trim() : (item.unit || ""),
       rate,
       amount: lineAmount,
       taxAmount: lineTax,

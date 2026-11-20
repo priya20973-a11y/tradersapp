@@ -4,7 +4,6 @@ import { z } from "zod";
 import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { Item, ItemPreference, Organization, PurchaseBill, SalesDocument } from "@/models";
-import { items as fallbackDemoItems } from "@/lib/demo-data";
 
 const itemInputSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(120),
@@ -24,47 +23,28 @@ const itemInputSchema = z.object({
   openingStock: z.coerce.number().min(0).default(0),
 });
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase().catch(() => null);
 
-    let orgId = session?.user?.organizationId;
+    const url = new URL(request.url);
+    const requestedOrgId = url.searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean();
-      if (defaultOrg) {
-        orgId = String(defaultOrg._id);
-      }
+      return NextResponse.json({ inventoryEnabled: false, items: [] });
     }
 
-    const pref = orgId
-      ? await ItemPreference.findOne({ organizationId: orgId }).lean().catch(() => null)
-      : null;
+    const pref = await ItemPreference.findOne({ organizationId: orgId }).lean().catch(() => null);
     const inventoryEnabled = Boolean(pref?.inventoryEnabled);
 
-    const query = orgId ? { organizationId: orgId, active: true } : { active: true };
+    const query = { organizationId: orgId, active: true };
     const dbItems = await Item.find(query).sort({ createdAt: -1 }).lean().catch(() => []);
 
     if (!dbItems || dbItems.length === 0) {
       return NextResponse.json({
         inventoryEnabled,
-        items: fallbackDemoItems.map((item, idx) => ({
-          id: `demo-${idx + 1}`,
-          name: item.name,
-          sku: item.sku,
-          type: item.unit.toLowerCase().includes("service") ? "service" : "goods",
-          unit: item.unit,
-          salesPrice: item.rate,
-          purchasePrice: Math.round(item.rate * 0.7),
-          salesAccount: "Sales",
-          purchaseAccount: "Cost of Goods Sold",
-          salesDescription: `${item.name} for standard billing`,
-          purchaseDescription: `${item.name} procurement`,
-          preferredVendor: "Mohan Traders",
-          stock: inventoryEnabled ? item.stock : 0,
-          inventoryTracking: inventoryEnabled,
-          active: true,
-        })),
+        items: [],
       });
     }
 
@@ -120,7 +100,9 @@ export async function GET() {
         sku?: string;
         type?: string;
         unit?: string;
+        hsnCode?: string;
         salesPrice?: number;
+        gstRate?: number;
         purchasePrice?: number;
         salesAccount?: string;
         purchaseAccount?: string;
@@ -146,7 +128,9 @@ export async function GET() {
           sku: item.sku,
           type: item.type ?? "goods",
           unit: item.unit ?? "pcs",
+          hsnCode: item.hsnCode ?? "",
           salesPrice: item.salesPrice ?? 0,
+          gstRate: item.gstRate ?? 18,
           purchasePrice: item.purchasePrice ?? 0,
           salesAccount: item.salesAccount ?? "Sales",
           purchaseAccount: item.purchaseAccount ?? "Cost of Goods Sold",
@@ -163,17 +147,8 @@ export async function GET() {
     console.error("GET /api/items error:", err);
     return NextResponse.json(
       {
-        items: fallbackDemoItems.map((item, idx) => ({
-          id: `demo-${idx + 1}`,
-          name: item.name,
-          sku: item.sku,
-          type: item.unit.toLowerCase().includes("service") ? "service" : "goods",
-          unit: item.unit,
-          salesPrice: item.rate,
-          purchasePrice: Math.round(item.rate * 0.7),
-          stock: item.stock,
-          active: true,
-        })),
+        inventoryEnabled: false,
+        items: [],
       },
       { status: 200 },
     );
@@ -202,12 +177,13 @@ export async function POST(request: Request) {
     await connectToDatabase();
 
     let orgId = session?.user?.organizationId;
+    if (session?.user?.id === "admin") {
+      const url = new URL(request.url);
+      const requestedOrgId = url.searchParams.get("organizationId");
+      if (requestedOrgId) orgId = requestedOrgId;
+    }
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean();
-      if (!defaultOrg) {
-        return NextResponse.json({ error: "No active organization found" }, { status: 400 });
-      }
-      orgId = String(defaultOrg._id);
+      return NextResponse.json({ error: "Unauthorized: organization context required" }, { status: 401 });
     }
 
     const pref = orgId

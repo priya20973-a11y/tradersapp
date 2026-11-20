@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  ChevronDown,
   Loader2,
   Package,
   Plus,
@@ -62,6 +64,10 @@ export function InvoiceForm({
   // Master Data
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [availableItems, setAvailableItems] = useState<ItemOption[]>([]);
+  const [activeItemRowId, setActiveItemRowId] = useState<string | null>(null);
+  const [itemDropdownPosition, setItemDropdownPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+  const itemInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const itemDropdownRef = useRef<HTMLDivElement>(null);
 
   // Modals
   const [showCustomerModal, setShowCustomerModal] = useState(false);
@@ -80,36 +86,6 @@ export function InvoiceForm({
     }
     return "";
   });
-  const [invoiceNumber, setInvoiceNumber] = useState(
-    initialData?.number || "",
-  );
-  const [referenceNumber, setReferenceNumber] = useState(
-    initialData?.referenceNumber || "",
-  );
-  const [invoiceDate, setInvoiceDate] = useState(() => {
-    if (initialData?.issueDate) {
-      return new Date(initialData.issueDate).toISOString().split("T")[0];
-    }
-    return new Date().toISOString().split("T")[0];
-  });
-  const [paymentTerms, setPaymentTerms] = useState(
-    initialData?.paymentTerms || "Due on Receipt",
-  );
-  const [dueDate, setDueDate] = useState(() => {
-    if (initialData?.dueDate) {
-      return new Date(initialData.dueDate).toISOString().split("T")[0];
-    }
-    return new Date().toISOString().split("T")[0];
-  });
-  const [placeOfSupply, setPlaceOfSupply] = useState(
-    initialData?.placeOfSupply || "Maharashtra",
-  );
-  const [salesperson, setSalesperson] = useState(
-    initialData?.salesperson || "",
-  );
-  const [subject, setSubject] = useState(initialData?.subject || "");
-
-  // Line items state
   const [rows, setRows] = useState<FormItemRow[]>(() => {
     if (initialData?.items && initialData.items.length > 0) {
       return initialData.items.map((item, idx) => ({
@@ -141,6 +117,197 @@ export function InvoiceForm({
       },
     ];
   });
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
+  const customerDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (customerDropdownRef.current && !customerDropdownRef.current.contains(event.target as Node)) {
+        setCustomerDropdownOpen(false);
+      }
+    }
+    if (customerDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [customerDropdownOpen]);
+
+  useEffect(() => {
+    if (!activeItemRowId) return;
+
+    const updateDropdownPosition = () => {
+      const input = itemInputRefs.current[activeItemRowId];
+      if (!input) return;
+      const rect = input.getBoundingClientRect();
+      setItemDropdownPosition({
+        top: rect.bottom + window.scrollY + 4,
+        left: rect.left + window.scrollX,
+        width: rect.width,
+      });
+    };
+
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (
+        target &&
+        (itemInputRefs.current[activeItemRowId]?.contains(target) ||
+          itemDropdownRef.current?.contains(target))
+      ) {
+        return;
+      }
+      setActiveItemRowId(null);
+    };
+
+    window.addEventListener("scroll", updateDropdownPosition, true);
+    window.addEventListener("resize", updateDropdownPosition);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      window.removeEventListener("scroll", updateDropdownPosition, true);
+      window.removeEventListener("resize", updateDropdownPosition);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [activeItemRowId]);
+  const [invoiceNumber, setInvoiceNumber] = useState(
+    initialData?.number || "",
+  );
+  const [referenceNumber, setReferenceNumber] = useState(
+    initialData?.referenceNumber || "",
+  );
+  const [invoiceDate, setInvoiceDate] = useState(() => {
+    if (initialData?.issueDate) {
+      return new Date(initialData.issueDate).toISOString().split("T")[0];
+    }
+    return new Date().toISOString().split("T")[0];
+  });
+  const [paymentTerms, setPaymentTerms] = useState(
+    initialData?.paymentTerms || "Due on Receipt",
+  );
+  const [dueDate, setDueDate] = useState(() => {
+    if (initialData?.dueDate) {
+      return new Date(initialData.dueDate).toISOString().split("T")[0];
+    }
+    return new Date().toISOString().split("T")[0];
+  });
+  const [placeOfSupply, setPlaceOfSupply] = useState(
+    initialData?.placeOfSupply || "Maharashtra",
+  );
+  const [salesperson, setSalesperson] = useState(
+    initialData?.salesperson || "",
+  );
+  const [subject, setSubject] = useState(initialData?.subject || "");
+
+  // Stock Location & Inventory State
+  const [locations, setLocations] = useState<Array<{ id: string; name: string; type: "Warehouse" | "Shop"; code?: string }>>([]);
+  const [stockLocationType, setStockLocationType] = useState<"Warehouse" | "Shop">(
+    initialData?.stockLocationType || "Warehouse"
+  );
+  const [stockLocationId, setStockLocationId] = useState(
+    initialData?.stockLocationId || ""
+  );
+  const [stockLocationName, setStockLocationName] = useState(
+    initialData?.stockLocationName || ""
+  );
+  const [relatedDocumentId, setRelatedDocumentId] = useState<string>(
+    initialData?.relatedDocumentId || ""
+  );
+  const [isLocationLocked, setIsLocationLocked] = useState<boolean>(
+    Boolean(initialData?.relatedDocumentId || initialData?.stockLocationId)
+  );
+  const [stockLevels, setStockLevels] = useState<Record<string, { onHandStock: number; reservedStock: number; availableStock: number; damagedStock: number }>>({});
+
+  useEffect(() => {
+    let isMounted = true;
+    fetch("/api/inventory/locations")
+      .then((r) => (r.ok ? r.json() : { locations: [] }))
+      .then((data) => {
+        if (!isMounted) return;
+        const locs = data.locations || [];
+        setLocations(locs);
+        if (!stockLocationId && locs.length > 0) {
+          const firstWh = locs.find((l: { id: string; name: string; type: string }) => l.type === "Warehouse");
+          if (firstWh) {
+            setStockLocationType("Warehouse");
+            setStockLocationId(firstWh.id);
+            setStockLocationName(firstWh.name);
+          } else {
+            setStockLocationType(locs[0].type);
+            setStockLocationId(locs[0].id);
+            setStockLocationName(locs[0].name);
+          }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [stockLocationId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const soId = new URLSearchParams(window.location.search).get("salesOrderId");
+    if (!soId) return;
+
+    fetch(`/api/sales?id=${soId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || !data.document) return;
+        const doc = data.document;
+        setRelatedDocumentId(doc.id || doc._id || soId);
+        setIsLocationLocked(true);
+        if (doc.stockLocationType) setStockLocationType(doc.stockLocationType);
+        if (doc.stockLocationId) setStockLocationId(doc.stockLocationId);
+        if (doc.stockLocationName) setStockLocationName(doc.stockLocationName);
+        if (doc.customerId) setSelectedCustomerId(doc.customerId);
+        if (Array.isArray(doc.items) && doc.items.length > 0) {
+          setRows(
+            doc.items.map((it: { itemId?: string; name?: string; description?: string; hsnCode?: string; unit?: string; quantity?: number; rate?: number; discount?: number; discountType?: "percent" | "amount"; taxRate?: number }, idx: number) => ({
+              rowId: `row-${idx + 1}`,
+              itemId: it.itemId,
+              name: it.name || "",
+              description: it.description || "",
+              hsnCode: it.hsnCode || "",
+              unit: it.unit || "pcs",
+              quantity: Number(it.quantity) || 1,
+              rate: Number(it.rate) || 0,
+              discount: Number(it.discount) || 0,
+              discountType: it.discountType || "percent",
+              taxRate: Number(it.taxRate) || 18,
+            }))
+          );
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!stockLocationId) {
+      void Promise.resolve().then(() => setStockLevels({}));
+      return;
+    }
+    let isMounted = true;
+    fetch(`/api/inventory/stock-levels?locationType=${stockLocationType}&locationId=${stockLocationId}`)
+      .then((r) => (r.ok ? r.json() : { stockLevels: [] }))
+      .then((data) => {
+        if (!isMounted) return;
+        const map: Record<string, { onHandStock: number; reservedStock: number; availableStock: number; damagedStock: number }> = {};
+        for (const item of data.stockLevels || []) {
+          map[item.commodityId] = {
+            onHandStock: Number(item.onHandStock) || 0,
+            reservedStock: Number(item.reservedStock) || 0,
+            availableStock: Number(item.availableStock) || 0,
+            damagedStock: Number(item.damagedStock) || 0,
+          };
+        }
+        setStockLevels(map);
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [stockLocationType, stockLocationId]);
 
   // Invoice-level adjustments
   const [invoiceDiscount, setInvoiceDiscount] = useState<string>(
@@ -174,23 +341,40 @@ export function InvoiceForm({
     let isMounted = true;
     Promise.all([
       fetch("/api/sales?section=customers").then((r) => (r.ok ? r.json() : { customers: [] })),
+      fetch("/api/sales/invoices").then((r) => (r.ok ? r.json() : { customers: [] })),
       fetch("/api/items").then((r) => (r.ok ? r.json() : { items: [] })),
       fetch("/api/sales/invoices/settings").then((r) => (r.ok ? r.json() : { settings: null })),
     ])
-      .then(([custData, itemsData, settingsData]) => {
+      .then(([salesData, invData, itemsData, settingsData]) => {
         if (!isMounted) return;
-        const mappedCusts: CustomerOption[] = ((custData.customers || []) as Array<Record<string, unknown>>).map((c) => ({
-          id: String(c.id || ""),
-          name: String(c.name || ""),
-          companyName: (c.companyName as string) || "",
-          email: (c.email as string) || "",
-          phone: (c.phone as string) || (c.mobile as string) || "",
-          gstin: (c.gstin as string) || "",
-          state: (c.state as string) || "",
-          paymentTerms: (c.paymentTerms as string) || "Due on Receipt",
-          billingAddress: c.billingAddress as CustomerOption["billingAddress"],
-          shippingAddress: c.shippingAddress as CustomerOption["shippingAddress"],
-        }));
+        const rawCusts: Array<Record<string, unknown>> = [];
+        if (Array.isArray(salesData.customers) && salesData.customers.length > 0) {
+          rawCusts.push(...salesData.customers);
+        }
+        if (Array.isArray(invData.customers) && invData.customers.length > 0) {
+          const existingIds = new Set(rawCusts.map((c) => String(c.id || c._id)));
+          for (const c of invData.customers) {
+            const cid = String(c.id || c._id);
+            if (cid && !existingIds.has(cid)) {
+              rawCusts.push(c);
+              existingIds.add(cid);
+            }
+          }
+        }
+        const mappedCusts: CustomerOption[] = rawCusts
+          .map((c) => ({
+            id: String(c.id || c._id || ""),
+            name: String(c.displayName || c.name || c.companyName || "Customer"),
+            companyName: (c.companyName as string) || "",
+            email: (c.email as string) || "",
+            phone: (c.phone as string) || (c.mobile as string) || "",
+            gstin: (c.gstin as string) || "",
+            state: (c.state as string) || (c.billingAddress ? ((c.billingAddress as { state?: string }).state || "") : ""),
+            paymentTerms: (c.paymentTerms as string) || "Due on Receipt",
+            billingAddress: c.billingAddress as CustomerOption["billingAddress"],
+            shippingAddress: c.shippingAddress as CustomerOption["shippingAddress"],
+          }))
+          .filter((c) => Boolean(c.id && c.name));
         setCustomers(mappedCusts);
 
         const mappedItems: ItemOption[] = ((itemsData.items || []) as Array<Record<string, unknown>>).map((i) => ({
@@ -237,6 +421,19 @@ export function InvoiceForm({
   const selectedCustomer = useMemo(() => {
     return customers.find((c) => c.id === selectedCustomerId);
   }, [customers, selectedCustomerId]);
+
+  const filteredCustomers = useMemo(() => {
+    if (!customerSearch) return customers;
+    const q = customerSearch.toLowerCase();
+    return customers.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.companyName && c.companyName.toLowerCase().includes(q)) ||
+        (c.gstin && c.gstin.toLowerCase().includes(q)) ||
+        (c.email && c.email.toLowerCase().includes(q)) ||
+        (c.phone && c.phone.toLowerCase().includes(q)),
+    );
+  }, [customers, customerSearch]);
 
   const handleNumberingSaved = (updated: InvoiceSettingsData) => {
     setInvoiceSettings(updated);
@@ -386,6 +583,7 @@ export function InvoiceForm({
       rate: item.salesPrice || 0,
       taxRate: item.gstRate !== undefined ? item.gstRate : 18,
     });
+    setActiveItemRowId(null);
   };
 
   // Live Calculations
@@ -419,6 +617,14 @@ export function InvoiceForm({
     initialData?.amountPaid,
   ]);
 
+  const activeItemRow = rows.find((row) => row.rowId === activeItemRowId);
+  const activeItemQuery = activeItemRow?.name.trim().toLowerCase() || "";
+  const itemSuggestions = activeItemRow
+    ? availableItems.filter((item) =>
+        `${item.name} ${item.sku}`.toLowerCase().includes(activeItemQuery),
+      )
+    : [];
+
   // Form Submit
   async function handleSubmit(status: "Draft" | "Sent") {
     if (!selectedCustomerId) {
@@ -432,6 +638,26 @@ export function InvoiceForm({
       return;
     }
 
+    if (!isLocationLocked && !stockLocationId) {
+      setError("Please select a stock location (Warehouse or Shop) for this invoice.");
+      return;
+    }
+
+    // Direct invoice stock validation
+    if (!isLocationLocked && status !== "Draft") {
+      for (const row of rows.filter((r) => r.name.trim())) {
+        if (row.itemId && stockLevels[row.itemId]) {
+          const avail = stockLevels[row.itemId].availableStock;
+          if (row.quantity > avail) {
+            setError(
+              `Insufficient available stock for "${row.name}". Available: ${avail}, Invoiced: ${row.quantity}`
+            );
+            return;
+          }
+        }
+      }
+    }
+
     setIsSubmitting(true);
     setError(null);
 
@@ -439,6 +665,10 @@ export function InvoiceForm({
       const payload = {
         number: invoiceNumber.trim() || undefined,
         customerId: selectedCustomerId,
+        stockLocationType,
+        stockLocationId: stockLocationId || undefined,
+        stockLocationName: stockLocationName || locations.find((l) => l.id === stockLocationId)?.name || undefined,
+        relatedDocumentId: relatedDocumentId || initialData?.relatedDocumentId || undefined,
         issueDate: invoiceDate,
         dueDate,
         paymentTerms,
@@ -579,10 +809,81 @@ export function InvoiceForm({
                 New Customer
               </button>
             </div>
+            <div className="relative" ref={customerDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setCustomerDropdownOpen((prev) => !prev)}
+                className="w-full flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none hover:bg-slate-50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition text-left cursor-pointer"
+              >
+                <span className={selectedCustomer ? "font-medium text-slate-900" : "text-slate-400"}>
+                  {selectedCustomer
+                    ? `${selectedCustomer.name}${selectedCustomer.companyName ? ` (${selectedCustomer.companyName})` : ""}`
+                    : "-- Select or search customer --"}
+                </span>
+                <ChevronDown className="h-4 w-4 text-slate-400" />
+              </button>
+
+              {customerDropdownOpen && (
+                <div className="absolute left-0 right-0 z-30 mt-1 max-h-60 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl animate-in fade-in duration-150">
+                  <input
+                    type="text"
+                    placeholder="Search by customer name, company, GSTIN, phone..."
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    className="w-full mb-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 focus:bg-white"
+                    autoFocus
+                  />
+                  <div className="divide-y divide-slate-100">
+                    {filteredCustomers.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          handleCustomerChange(c.id);
+                          setCustomerDropdownOpen(false);
+                          setCustomerSearch("");
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 rounded-lg transition flex items-center justify-between cursor-pointer ${
+                          c.id === selectedCustomerId ? "bg-blue-50/80 font-semibold text-blue-900" : "text-slate-800"
+                        }`}
+                      >
+                        <div>
+                          <p className="font-semibold text-slate-900">
+                            {c.name}
+                            {c.companyName && (
+                              <span className="font-normal text-slate-500 ml-1">({c.companyName})</span>
+                            )}
+                          </p>
+                          {(c.gstin || c.phone) && (
+                            <p className="font-mono text-[10px] text-slate-400">
+                              {c.gstin ? `GST: ${c.gstin}` : ""}
+                              {c.gstin && c.phone ? " • " : ""}
+                              {c.phone ? `Phone: ${c.phone}` : ""}
+                            </p>
+                          )}
+                        </div>
+                        {c.state && (
+                          <span className="text-[10px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                            {c.state}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                    {filteredCustomers.length === 0 && (
+                      <p className="p-3 text-center text-xs text-slate-400">No matching customers</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Hidden fallback select for accessibility and form automation */}
             <select
               value={selectedCustomerId}
               onChange={(e) => handleCustomerChange(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition"
+              className="sr-only"
+              tabIndex={-1}
+              aria-hidden="true"
             >
               <option value="">-- Select or search customer --</option>
               {customers.map((c) => (
@@ -749,6 +1050,100 @@ export function InvoiceForm({
           </div>
         </div>
 
+        {/* Stock Location */}
+        {isLocationLocked ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-xl">🔒</span>
+                <div>
+                  <p className="text-xs font-bold text-amber-900">
+                    Stock Location: {stockLocationType} - {stockLocationName || stockLocationId}
+                  </p>
+                  <p className="text-xs text-amber-700">
+                    Locked to Sales Order reservation. Invoicing will deduct {stockLocationType} On Hand and Reserved stock automatically.
+                  </p>
+                </div>
+              </div>
+              <span className="text-[11px] font-semibold bg-amber-200/80 text-amber-900 px-2.5 py-1 rounded-full border border-amber-300">
+                SO Reserved
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-800">
+                Stock Location <span className="text-rose-500">*</span>
+              </label>
+              <span className="text-[11px] font-medium text-blue-600 bg-blue-100/60 px-2 py-0.5 rounded-md">
+                Direct Stock Out Source
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStockLocationType("Warehouse");
+                    const firstWh = locations.find((l) => l.type === "Warehouse");
+                    if (firstWh) {
+                      setStockLocationId(firstWh.id);
+                      setStockLocationName(firstWh.name);
+                    }
+                  }}
+                  className={`py-2 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                    stockLocationType === "Warehouse"
+                      ? "border-blue-600 bg-white text-blue-700 shadow-xs ring-2 ring-blue-100"
+                      : "border-slate-200 bg-white/70 text-slate-600 hover:bg-white"
+                  }`}
+                >
+                  🏢 Warehouse
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStockLocationType("Shop");
+                    const firstShop = locations.find((l) => l.type === "Shop");
+                    if (firstShop) {
+                      setStockLocationId(firstShop.id);
+                      setStockLocationName(firstShop.name);
+                    }
+                  }}
+                  className={`py-2 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                    stockLocationType === "Shop"
+                      ? "border-blue-600 bg-white text-blue-700 shadow-xs ring-2 ring-blue-100"
+                      : "border-slate-200 bg-white/70 text-slate-600 hover:bg-white"
+                  }`}
+                >
+                  🏪 Shop
+                </button>
+              </div>
+              <div className="sm:col-span-2">
+                <select
+                  value={stockLocationId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setStockLocationId(id);
+                    const found = locations.find((l) => l.id === id);
+                    setStockLocationName(found ? found.name : "");
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition"
+                >
+                  <option value="">Select {stockLocationType}...</option>
+                  {locations
+                    .filter((l) => l.type === stockLocationType)
+                    .map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name} {loc.code ? `(${loc.code})` : ""}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Subject line */}
         <div>
           <label className="block text-xs font-semibold text-slate-800 mb-1.5">
@@ -808,35 +1203,49 @@ export function InvoiceForm({
                     {/* Item Name / Picker */}
                     <td className="py-3 px-3 align-top">
                       <div className="space-y-1.5">
-                        <div className="flex items-center gap-1.5">
+                        <div className="relative">
                           <input
                             type="text"
                             required
                             placeholder="Type item name..."
                             value={row.name}
-                            onChange={(e) =>
-                              handleUpdateRow(row.rowId, { name: e.target.value })
-                            }
+                            autoComplete="off"
+                            role="combobox"
+                            aria-expanded={activeItemRowId === row.rowId}
+                            aria-controls={`invoice-item-options-${row.rowId}`}
+                            ref={(input) => {
+                              itemInputRefs.current[row.rowId] = input;
+                            }}
+                            onFocus={(event) => {
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              setItemDropdownPosition({
+                                top: rect.bottom + window.scrollY + 4,
+                                left: rect.left + window.scrollX,
+                                width: rect.width,
+                              });
+                              setActiveItemRowId(row.rowId);
+                            }}
+                            onBlur={(event) => {
+                              const nextTarget = event.relatedTarget as Node | null;
+                              if (!nextTarget || !itemDropdownRef.current?.contains(nextTarget)) {
+                                setActiveItemRowId(null);
+                              }
+                            }}
+                            onChange={(e) => {
+                              const updates: Partial<FormItemRow> = { name: e.target.value };
+                              if (row.itemId) {
+                                updates.itemId = undefined;
+                                updates.description = "";
+                                updates.hsnCode = "";
+                                updates.unit = "pcs";
+                                updates.rate = 0;
+                                updates.taxRate = 18;
+                              }
+                              handleUpdateRow(row.rowId, updates);
+                              setActiveItemRowId(row.rowId);
+                            }}
                             className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-900 outline-none focus:border-blue-500"
                           />
-                          {availableItems.length > 0 && (
-                            <select
-                              value={row.itemId || ""}
-                              onChange={(e) =>
-                                handleSelectItem(row.rowId, e.target.value)
-                              }
-                              title="Pick from items"
-                              aria-label="Pick from items"
-                              className="w-20 rounded-lg border border-slate-200 bg-slate-50 px-1 py-1.5 text-[11px] text-slate-600 outline-none"
-                            >
-                              <option value="">Select</option>
-                              {availableItems.map((item) => (
-                                <option key={item.id} value={item.id}>
-                                  {item.name}
-                                </option>
-                              ))}
-                            </select>
-                          )}
                         </div>
                         <input
                           type="text"
@@ -849,6 +1258,26 @@ export function InvoiceForm({
                           }
                           className="w-full rounded-lg border border-slate-200/80 px-2.5 py-1 text-[11px] text-slate-600 outline-none focus:border-blue-500"
                         />
+                        {row.itemId && stockLevels[row.itemId] && (
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] pt-0.5 font-medium">
+                            <span className="text-slate-500">
+                              On Hand: <strong className="text-slate-800">{stockLevels[row.itemId].onHandStock}</strong>
+                            </span>
+                            <span className="text-slate-300">•</span>
+                            <span className="text-amber-600">
+                              Reserved: <strong>{stockLevels[row.itemId].reservedStock}</strong>
+                            </span>
+                            <span className="text-slate-300">•</span>
+                            <span className={stockLevels[row.itemId].availableStock < row.quantity ? "text-rose-600 font-bold" : "text-emerald-700 font-semibold"}>
+                              Available: {stockLevels[row.itemId].availableStock}
+                            </span>
+                            {!isLocationLocked && stockLevels[row.itemId].availableStock < row.quantity && (
+                              <span className="text-[9px] bg-rose-50 text-rose-600 border border-rose-200 px-1 py-0.2 rounded">
+                                Exceeds Available
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </td>
 
@@ -1225,6 +1654,47 @@ export function InvoiceForm({
           onSaved={handleNumberingSaved}
         />
       )}
+      {activeItemRow && itemDropdownPosition && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={itemDropdownRef}
+            id={`invoice-item-options-${activeItemRow.rowId}`}
+            role="listbox"
+            style={{
+              position: "absolute",
+              top: itemDropdownPosition.top,
+              left: itemDropdownPosition.left,
+              width: itemDropdownPosition.width,
+              zIndex: 1000,
+            }}
+            className="rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+          >
+            {itemSuggestions.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="option"
+                aria-selected={activeItemRow.itemId === item.id}
+                onClick={() => handleSelectItem(activeItemRow.rowId, item.id)}
+                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs hover:bg-blue-50 focus:bg-blue-50 focus:outline-none"
+              >
+                <span className="font-semibold text-slate-800">{item.name}</span>
+                <span className="shrink-0 text-[10px] text-slate-500">
+                  {item.sku ? `${item.sku} · ` : ""}
+                  {formatCurrency(item.salesPrice)}
+                </span>
+              </button>
+            ))}
+            {itemSuggestions.length === 0 && (
+              <div className="px-3 py-2 text-xs text-slate-500">
+                {activeItemQuery
+                  ? "No matching product. Continue typing a custom item."
+                  : "No products available. Continue with a custom item."}
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

@@ -239,7 +239,7 @@ export function AuthForm(props: AuthFormProps) {
         setSuccess(
           result.pendingApproval
             ? "Your organization request was submitted with all provided details. An administrator must approve it before you can sign in."
-            : "Your account is ready. Sign in to continue.",
+            : "Registration request submitted successfully! Your account is awaiting admin approval.",
         );
         return;
       }

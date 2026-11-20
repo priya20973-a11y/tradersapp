@@ -64,7 +64,8 @@ export function calculateNextDate(startDateStr: string, repeatEvery: string): st
   return next.toISOString().split("T")[0];
 }
 
-export const defaultDemoRecurringExpenses = [
+export const defaultDemoRecurringExpenses: Array<Record<string, unknown>> = [];
+const _deprecatedDemoRecurringExpenses = [
   {
     _id: "demo-rec-01",
     id: "demo-rec-01",
@@ -129,39 +130,23 @@ export async function GET(request: Request) {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase().catch(() => null);
 
-    let orgId = session?.user?.organizationId;
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean().catch(() => null);
-      if (defaultOrg) orgId = String(defaultOrg._id);
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search")?.toLowerCase().trim();
     const status = searchParams.get("status");
 
-    const query: Record<string, unknown> = {};
-    if (orgId) query.organizationId = orgId;
+    const query: Record<string, unknown> = { organizationId: orgId };
     if (status && status !== "ALL") query.status = status;
 
     const dbProfiles = await RecurringExpense.find(query)
       .sort({ createdAt: -1 })
       .lean()
       .catch(() => []);
-
-    if (!dbProfiles || dbProfiles.length === 0) {
-      let filtered = [...defaultDemoRecurringExpenses];
-      if (status && status !== "ALL") {
-        filtered = filtered.filter((p) => p.status.toLowerCase() === status.toLowerCase());
-      }
-      if (search) {
-        filtered = filtered.filter((p) =>
-          [p.profileName, p.expenseAccount, p.vendor, p.customerName, p.notes]
-            .filter(Boolean)
-            .some((v) => String(v).toLowerCase().includes(search)),
-        );
-      }
-      return NextResponse.json({ profiles: filtered });
-    }
 
     let results = dbProfiles.map((p: Record<string, unknown>) => ({
       _id: String(p._id),
@@ -213,13 +198,10 @@ export async function POST(request: Request) {
     const session = await getServerSession(authOptions).catch(() => null);
     await connectToDatabase();
 
-    let orgId = session?.user?.organizationId;
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean();
-      if (!defaultOrg) {
-        return NextResponse.json({ error: "No active organization found" }, { status: 400 });
-      }
-      orgId = String(defaultOrg._id);
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const parsed = recurringExpenseSchema.safeParse(body);

@@ -100,7 +100,8 @@ export const purchaseOrderInputSchema = z.object({
     .default([]),
 });
 
-export const defaultDemoPurchaseOrders = [
+export const defaultDemoPurchaseOrders: Array<Record<string, unknown>> = [];
+const _deprecatedDemoOrders = [
   {
     id: "PO-2026-0041",
     _id: "PO-2026-0041",
@@ -526,16 +527,17 @@ export async function GET(request: Request) {
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
     const limit = Math.max(1, Math.min(100, parseInt(searchParams.get("limit") || "10", 10)));
 
-    let orgId = session?.user?.organizationId;
+    const requestedOrgId = searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean().catch(() => null);
-      if (defaultOrg) orgId = String(defaultOrg._id);
+      return NextResponse.json({
+        purchaseOrders: [],
+        metrics: { totalOrders: 0, openOrdersCount: 0, fulfilledOrdersCount: 0, totalOrdersValue: 0 },
+        pagination: { total: 0, page: 1, limit, totalPages: 0 },
+      });
     }
 
-    const query: Record<string, unknown> = {};
-    if (orgId) {
-      query.organizationId = orgId;
-    }
+    const query: Record<string, unknown> = { organizationId: orgId };
     if (status && status !== "ALL") {
       query.status = status;
     }
@@ -561,7 +563,7 @@ export async function GET(request: Request) {
     let allOrders: OrderRecord[] =
       dbOrders && dbOrders.length > 0
         ? (dbOrders as Array<Record<string, unknown>>).map((d) => ({ ...d, id: String(d._id || d.purchaseOrderNumber) }))
-        : (defaultDemoPurchaseOrders as OrderRecord[]);
+        : [];
 
     if (search) {
       allOrders = allOrders.filter((po) => {
@@ -661,10 +663,10 @@ export async function POST(request: Request) {
 
     const data = parseResult.data;
 
-    let orgId = session?.user?.organizationId;
+    const requestedOrgId = new URL(request.url).searchParams.get("organizationId");
+    const orgId = session?.user?.id === "admin" && requestedOrgId ? requestedOrgId : session?.user?.organizationId;
     if (!orgId) {
-      const defaultOrg = await Organization.findOne().select("_id").lean().catch(() => null);
-      if (defaultOrg) orgId = String(defaultOrg._id);
+      return NextResponse.json({ error: "Unauthorized: organization context required" }, { status: 401 });
     }
 
     // Determine numbering mode and allocate PO number

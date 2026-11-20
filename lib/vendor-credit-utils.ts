@@ -44,6 +44,12 @@ export const vendorCreditSchema = z.object({
   taxRate: z.coerce.number().default(0),
   adjustment: z.coerce.number().default(0),
   notes: z.string().default(""),
+  isPhysicalReturn: z.boolean().optional().default(false),
+  stockLocationType: z.enum(["Warehouse", "Shop"]).optional(),
+  stockLocationId: z.string().optional(),
+  stockLocationName: z.string().optional(),
+  purchaseBillId: z.string().optional(),
+  purchaseBillNumber: z.string().optional(),
   status: z.enum(["Draft", "Open", "Partially Applied", "Closed", "Void"]).default("Open"),
   attachments: z.array(vendorCreditAttachmentSchema).max(MAX_ATTACHMENTS_COUNT, "Maximum 5 attachments allowed").default([]),
 });

@@ -1,9 +1,14 @@
-import { isValidObjectId, type Types } from "mongoose";
+import { isValidObjectId, Types } from "mongoose";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import { Customer, Organization, SalesDocument } from "@/models";
+import { Customer, Organization, SalesDocument, StockLocation, Warehouse } from "@/models";
+import {
+  cancelSalesOrderReservation,
+  recordInvoiceStockOut,
+  reserveStockForSalesOrder,
+} from "@/lib/inventory-service";
 import {
   type DocumentType,
   commandSchema,
@@ -37,6 +42,15 @@ async function getSales(request: Request) {
       if (cust?.organizationId) {
         requestedOrganizationId = String(cust.organizationId);
       }
+    }
+  }
+
+  if (session.user.id === "admin" && !requestedOrganizationId) {
+    const defaultOrg =
+      (await Organization.findOne({ status: "active" }).select("_id").lean().catch(() => null)) ||
+      (await Organization.findOne().select("_id").lean().catch(() => null));
+    if (defaultOrg) {
+      requestedOrganizationId = String(defaultOrg._id);
     }
   }
 
@@ -79,50 +93,62 @@ async function getSales(request: Request) {
     docQuery.type = "Credit Note";
   }
 
-  const [organization, allOrganizations, customers, documents] = await Promise.all([
+  const [organization, allOrganizations, customersRaw, documents] = await Promise.all([
     Organization.findById(scope.organizationId).select("_id name").lean(),
     scope.isAdmin
       ? Organization.find({ status: "active" }).select("_id name").sort({ name: 1 }).lean()
       : Promise.resolve([]),
-    Customer.find({ organizationId: scope.organizationId })
+    Customer.find({
+      $or: [
+        { organizationId: scope.organizationId },
+        ...(isValidObjectId(scope.organizationId) ? [{ organizationId: new Types.ObjectId(scope.organizationId) }] : []),
+      ],
+    })
       .sort({ name: 1 })
-      .lean(),
+      .lean()
+      .catch(() => []),
     SalesDocument.find(docQuery).sort({ createdAt: -1 }).lean(),
   ]);
   if (!organization) return respondError("The selected organization was not found.", 404);
+
+  const customers = customersRaw;
+
   return NextResponse.json({
     organizations: (scope.isAdmin ? allOrganizations : [organization]).map((item) => ({
       id: String(item._id),
       name: item.name,
     })),
-    customers: customers.map((customer) => ({
-      id: String(customer._id),
-      name: customer.name,
-      customerType: customer.customerType ?? "Business",
-      companyName: customer.companyName ?? "",
-      email: customer.email ?? "",
-      phone: customer.phone ?? "",
-      mobile: customer.mobile ?? "",
-      openingBalance: Number(customer.openingBalance ?? 0),
-      creditLimit: Number(customer.creditLimit ?? 0),
-      unusedCredits: Number(customer.unusedCredits ?? 0),
-      status: customer.status ?? "Active",
-      gstin: customer.gstin ?? "",
-      pan: customer.pan ?? "",
-      state: customer.state ?? "",
-      customerLanguage: customer.customerLanguage ?? "English",
-      currency: customer.currency ?? "INR",
-      paymentTerms: customer.paymentTerms ?? "Due on Receipt",
-      billingAddress: customer.billingAddress,
-      shippingAddress: customer.shippingAddress,
-      contactPersons: customer.contactPersons ?? [],
-      customFields: customer.customFields ?? [],
-      reportingTags: customer.reportingTags ?? [],
-      remarks: customer.remarks ?? "",
-      comments: ((customer as unknown as Record<string, unknown>).comments as unknown[]) ?? [],
-      createdAt: customer.createdAt ? new Date(String(customer.createdAt)).toISOString() : "",
-      updatedAt: customer.updatedAt ? new Date(String(customer.updatedAt)).toISOString() : "",
-    })),
+    customers: customers.map((customer) => {
+      const cRec = customer as Record<string, unknown>;
+      return {
+        id: String(customer._id),
+        name: String(customer.name || cRec.displayName || customer.companyName || "Customer"),
+        customerType: customer.customerType ?? "Business",
+        companyName: customer.companyName ?? "",
+        email: customer.email ?? "",
+        phone: customer.phone ?? customer.mobile ?? "",
+        mobile: customer.mobile ?? "",
+        openingBalance: Number(customer.openingBalance ?? 0),
+        creditLimit: Number(customer.creditLimit ?? 0),
+        unusedCredits: Number(customer.unusedCredits ?? 0),
+        status: customer.status ?? "Active",
+        gstin: customer.gstin ?? "",
+        pan: customer.pan ?? "",
+        state: customer.state ?? (customer.billingAddress as { state?: string })?.state ?? "",
+        customerLanguage: customer.customerLanguage ?? "English",
+        currency: customer.currency ?? "INR",
+        paymentTerms: customer.paymentTerms ?? "Due on Receipt",
+        billingAddress: customer.billingAddress,
+        shippingAddress: customer.shippingAddress,
+        contactPersons: customer.contactPersons ?? [],
+        customFields: customer.customFields ?? [],
+        reportingTags: customer.reportingTags ?? [],
+        remarks: customer.remarks ?? "",
+        comments: ((customer as unknown as Record<string, unknown>).comments as unknown[]) ?? [],
+        createdAt: customer.createdAt ? new Date(String(customer.createdAt)).toISOString() : "",
+        updatedAt: customer.updatedAt ? new Date(String(customer.updatedAt)).toISOString() : "",
+      };
+    }),
     documents: documents.map((document) => {
       const docRec = document as unknown as Record<string, unknown>;
       return {
@@ -164,6 +190,9 @@ async function getSales(request: Request) {
         tdsTcsAmount: (docRec.tdsTcsAmount as number) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxAmount : 0),
         adjustment: document.adjustment ?? 0,
         items: document.items ?? [],
+        stockLocationType: (docRec.stockLocationType as "Warehouse" | "Shop") || undefined,
+        stockLocationId: docRec.stockLocationId ? String(docRec.stockLocationId) : undefined,
+        stockLocationName: (docRec.stockLocationName as string) || "",
         createdAt: document.createdAt ? new Date(String(document.createdAt)).toISOString() : "",
         paymentDate: docRec.paymentDate ? new Date(String(docRec.paymentDate)).toISOString() : "",
       };
@@ -190,6 +219,7 @@ async function postSales(request: Request) {
   }
 
   await connectToDatabase();
+  const authSession = await getServerSession(authOptions);
 
   const rawPayload = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
   let requestedOrganizationId =
@@ -215,8 +245,7 @@ async function postSales(request: Request) {
   }
 
   if (!requestedOrganizationId) {
-    const session = await getServerSession(authOptions);
-    if (session?.user?.id === "admin") {
+    if (authSession?.user?.id === "admin") {
       const defaultOrg = await Organization.findOne({ status: "active" }).select("_id").lean();
       if (defaultOrg) {
         requestedOrganizationId = String(defaultOrg._id);
@@ -356,6 +385,45 @@ async function postSales(request: Request) {
     itemId: it.itemId && isValidObjectId(it.itemId) ? it.itemId : undefined,
   }));
 
+  let resolvedLocationType: "Warehouse" | "Shop" | undefined =
+    "stockLocationType" in data.data && (data.data.stockLocationType === "Warehouse" || data.data.stockLocationType === "Shop")
+      ? data.data.stockLocationType
+      : undefined;
+  let resolvedLocationId: Types.ObjectId | undefined =
+    "stockLocationId" in data.data && data.data.stockLocationId && isValidObjectId(data.data.stockLocationId)
+      ? new Types.ObjectId(data.data.stockLocationId)
+      : undefined;
+  let resolvedLocationName =
+    "stockLocationName" in data.data && data.data.stockLocationName
+      ? String(data.data.stockLocationName)
+      : "";
+
+  if ((type === "Sales Order" || type === "Invoice") && (!resolvedLocationType || !resolvedLocationId)) {
+    const defaultWh = await Warehouse.findOne({ organizationId, status: "Active" }).select("_id name").lean();
+    if (defaultWh) {
+      resolvedLocationType = "Warehouse";
+      resolvedLocationId = new Types.ObjectId(String(defaultWh._id));
+      resolvedLocationName = String(defaultWh.name || "Main Warehouse");
+    } else {
+      const defaultShop = await StockLocation.findOne({ organizationId, locationType: "Shop" }).select("_id name").lean();
+      if (defaultShop) {
+        resolvedLocationType = "Shop";
+        resolvedLocationId = new Types.ObjectId(String(defaultShop._id));
+        resolvedLocationName = String(defaultShop.name || "Main Shop");
+      }
+    }
+  }
+
+  if (resolvedLocationId && !resolvedLocationName) {
+    if (resolvedLocationType === "Warehouse") {
+      const wh = await Warehouse.findById(resolvedLocationId).select("name").lean();
+      if (wh?.name) resolvedLocationName = wh.name;
+    } else if (resolvedLocationType === "Shop") {
+      const sh = await StockLocation.findById(resolvedLocationId).select("name").lean();
+      if (sh?.name) resolvedLocationName = sh.name;
+    }
+  }
+
   const buildDocPayload = (docNumber: string) => ({
     organizationId,
     type,
@@ -364,6 +432,9 @@ async function postSales(request: Request) {
     relatedDocumentId,
     status,
     total: verifiedTotal,
+    stockLocationType: resolvedLocationType,
+    stockLocationId: resolvedLocationId,
+    stockLocationName: resolvedLocationName,
     issueDate: "issueDate" in data.data && data.data.issueDate ? new Date(data.data.issueDate) : new Date(),
     dueDate: "dueDate" in data.data && data.data.dueDate ? new Date(data.data.dueDate) : undefined,
     expiryDate: "expiryDate" in data.data && data.data.expiryDate ? new Date(data.data.expiryDate) : undefined,
@@ -396,6 +467,54 @@ async function postSales(request: Request) {
 
   try {
     const document = await SalesDocument.create(buildDocPayload(number));
+
+    if (
+      type === "Sales Order" &&
+      (status === "Confirmed" || status === "Invoiced") &&
+      resolvedLocationType &&
+      resolvedLocationId &&
+      sanitizedItems &&
+      sanitizedItems.length > 0
+    ) {
+      await reserveStockForSalesOrder({
+        organizationId,
+        salesOrderId: document._id,
+        salesOrderNumber: document.number,
+        locationType: resolvedLocationType,
+        locationId: resolvedLocationId,
+        items: sanitizedItems.map((it) => ({
+          commodityId: it.itemId ? String(it.itemId) : "",
+          quantity: it.quantity,
+          rate: it.rate,
+          name: it.name,
+        })),
+        actorId: authSession?.user?.id ? String(authSession.user.id) : "system",
+      });
+    }
+
+    if (
+      type === "Invoice" &&
+      resolvedLocationType &&
+      resolvedLocationId &&
+      sanitizedItems &&
+      sanitizedItems.length > 0
+    ) {
+      await recordInvoiceStockOut({
+        organizationId,
+        invoiceId: document._id,
+        invoiceNumber: document.number,
+        locationType: resolvedLocationType,
+        locationId: resolvedLocationId,
+        items: sanitizedItems.map((it) => ({
+          commodityId: it.itemId ? String(it.itemId) : "",
+          quantity: it.quantity,
+          rate: it.rate,
+          name: it.name,
+        })),
+        actorId: authSession?.user?.id ? String(authSession.user.id) : "system",
+      });
+    }
+
     return NextResponse.json({ ok: true, id: String(document._id), number }, { status: 201 });
   } catch (err: unknown) {
     const mongoErr = typeof err === "object" && err !== null && "code" in err ? (err as { code: number }) : null;
@@ -460,6 +579,40 @@ async function patchSales(request: Request) {
   ) {
     return respondError("This record is already closed and cannot change status.", 409);
   }
+  if (document.type === "Sales Order") {
+    if (data.data.status === "Confirmed" && document.status !== "Confirmed") {
+      let locType = document.stockLocationType;
+      let locId = document.stockLocationId;
+      if (!locType || !locId) {
+        const defaultWh = await Warehouse.findOne({ organizationId: scope.organizationId, status: "Active" }).select("_id").lean();
+        if (defaultWh) {
+          locType = "Warehouse";
+          locId = defaultWh._id;
+        }
+      }
+      if (locType && locId && document.items && document.items.length > 0) {
+        await reserveStockForSalesOrder({
+          organizationId: scope.organizationId,
+          salesOrderId: document._id,
+          salesOrderNumber: document.number,
+          locationType: locType as "Warehouse" | "Shop",
+          locationId: locId,
+          items: document.items.map((it) => ({
+            commodityId: it.itemId ? String(it.itemId) : "",
+            quantity: it.quantity,
+            rate: it.rate,
+            name: it.name,
+          })),
+        });
+      }
+    } else if (data.data.status === "Cancelled") {
+      await cancelSalesOrderReservation({
+        organizationId: scope.organizationId,
+        salesOrderId: document._id,
+      });
+    }
+  }
+
   await SalesDocument.updateOne({ _id: document._id, organizationId: scope.organizationId }, {
     $set: { status: data.data.status },
   });
@@ -559,6 +712,18 @@ async function putSales(request: Request) {
       amount: Number(it.amount) || 0,
     })) as unknown as typeof doc.items;
   }
+  const wasConfirmedSO = doc.type === "Sales Order" && (doc.status === "Confirmed" || doc.status === "Invoiced");
+
+  if (payload.stockLocationType === "Warehouse" || payload.stockLocationType === "Shop") {
+    doc.stockLocationType = payload.stockLocationType;
+  }
+  if (typeof payload.stockLocationId === "string" && isValidObjectId(payload.stockLocationId)) {
+    doc.stockLocationId = new Types.ObjectId(payload.stockLocationId);
+  }
+  if (typeof payload.stockLocationName === "string") {
+    doc.stockLocationName = payload.stockLocationName;
+  }
+
   if (payload.notes !== undefined) doc.notes = String(payload.notes);
 
   if (
@@ -583,6 +748,31 @@ async function putSales(request: Request) {
 
   try {
     await doc.save();
+
+    if (doc.type === "Sales Order" && (wasConfirmedSO || doc.status === "Confirmed")) {
+      // Re-adjust reservation atomically: release old reservation and reserve with updated location/quantities
+      await cancelSalesOrderReservation({
+        organizationId: scope.organizationId,
+        salesOrderId: doc._id,
+      });
+
+      if (doc.status === "Confirmed" && doc.stockLocationType && doc.stockLocationId && doc.items && doc.items.length > 0) {
+        await reserveStockForSalesOrder({
+          organizationId: scope.organizationId,
+          salesOrderId: doc._id,
+          salesOrderNumber: doc.number,
+          locationType: doc.stockLocationType as "Warehouse" | "Shop",
+          locationId: doc.stockLocationId,
+          items: doc.items.map((it) => ({
+            commodityId: it.itemId ? String(it.itemId) : "",
+            quantity: it.quantity,
+            rate: it.rate,
+            name: it.name,
+          })),
+        });
+      }
+    }
+
     return NextResponse.json({ ok: true, id: String(doc._id), number: doc.number });
   } catch (err: unknown) {
     const mongoErr = typeof err === "object" && err !== null && "code" in err ? (err as { code: number }) : null;

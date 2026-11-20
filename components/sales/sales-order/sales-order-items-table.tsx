@@ -8,11 +8,12 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { type ItemOption, type OrderItemRow } from "./sales-order-types";
+import { type CommodityStockInfo, type ItemOption, type OrderItemRow } from "./sales-order-types";
 
 interface SalesOrderItemsTableProps {
   rows: OrderItemRow[];
   availableItems: ItemOption[];
+  stockLevels?: Record<string, CommodityStockInfo>;
   showBulkActionsMenu: boolean;
   setShowBulkActionsMenu: React.Dispatch<React.SetStateAction<boolean>>;
   handleSelectItem: (rowId: string, itemId: string) => void;
@@ -27,6 +28,7 @@ interface SalesOrderItemsTableProps {
 export function SalesOrderItemsTable({
   rows,
   availableItems,
+  stockLevels = {},
   showBulkActionsMenu,
   setShowBulkActionsMenu,
   handleSelectItem,
@@ -144,6 +146,26 @@ export function SalesOrderItemsTable({
                       placeholder="Add an optional specification or notes to this item..."
                       className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 bg-slate-50/70 text-slate-700 resize-none transition"
                     />
+                    {row.itemId && (
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] pt-0.5">
+                        <span className="text-slate-500">
+                          On Hand: <strong className="text-slate-700">{stockLevels[row.itemId]?.onHandStock ?? 0}</strong>
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <span className="text-amber-600">
+                          Reserved: <strong>{stockLevels[row.itemId]?.reservedStock ?? 0}</strong>
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <span className={(stockLevels[row.itemId]?.availableStock ?? 0) < row.quantity ? "text-rose-600 font-bold" : "text-emerald-700 font-semibold"}>
+                          Available: <strong>{stockLevels[row.itemId]?.availableStock ?? 0}</strong>
+                        </span>
+                        {(stockLevels[row.itemId]?.availableStock ?? 0) < row.quantity && (
+                          <span className="text-[10px] bg-rose-50 text-rose-600 px-1.5 py-0.2 rounded border border-rose-200">
+                            Insufficient Stock
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3.5 text-right align-top">
                     <input

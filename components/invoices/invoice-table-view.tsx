@@ -24,6 +24,7 @@ interface InvoiceTableViewProps {
   selectedInvoices: string[];
   onToggleSelectAll: () => void;
   onToggleSelect: (id: string) => void;
+  onSelectInvoice?: (id: string) => void;
   onRecordPayment: (invoice: InvoiceRecord) => void;
   onApplyCredit?: (invoice: InvoiceRecord) => void;
   onSendEmail: (invoice: InvoiceRecord) => void;
@@ -38,6 +39,7 @@ export function InvoiceTableView({
   selectedInvoices,
   onToggleSelectAll,
   onToggleSelect,
+  onSelectInvoice,
   onRecordPayment,
   onApplyCredit,
   onSendEmail,
@@ -157,12 +159,13 @@ export function InvoiceTableView({
               return (
                 <tr
                   key={inv.id}
-                  className={`group transition hover:bg-slate-50/80 ${
+                  onClick={() => onSelectInvoice?.(inv.id)}
+                  className={`group transition hover:bg-slate-50/80 cursor-pointer ${
                     isSelected ? "bg-blue-50/30" : ""
                   }`}
                 >
                   {/* Select Checkbox */}
-                  <td className="py-3.5 px-3.5">
+                  <td className="py-3.5 px-3.5" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       checked={isSelected}
@@ -176,6 +179,12 @@ export function InvoiceTableView({
                   <td className="py-3.5 px-3">
                     <Link
                       href={`/sales/invoices/${inv.id}`}
+                      onClick={(e) => {
+                        if (onSelectInvoice) {
+                          e.preventDefault();
+                          onSelectInvoice(inv.id);
+                        }
+                      }}
                       className="font-mono font-bold text-blue-600 hover:text-blue-800 hover:underline"
                     >
                       {inv.number}
@@ -229,7 +238,7 @@ export function InvoiceTableView({
                   </td>
 
                   {/* Actions */}
-                  <td className="py-3.5 px-4 text-right">
+                  <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1.5 opacity-90 group-hover:opacity-100 transition">
                       {/* Apply credit note quick button if balance > 0 */}
                       {inv.balanceDue > 0 && inv.status !== "Void" && (
@@ -255,13 +264,24 @@ export function InvoiceTableView({
                         </button>
                       )}
 
-                      <Link
-                        href={`/sales/invoices/${inv.id}`}
-                        title="View Invoice"
-                        className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Link>
+                      {onSelectInvoice ? (
+                        <button
+                          type="button"
+                          onClick={() => onSelectInvoice(inv.id)}
+                          title="View Invoice"
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      ) : (
+                        <Link
+                          href={`/sales/invoices/${inv.id}`}
+                          title="View Invoice"
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Link>
+                      )}
 
                       {inv.status !== "Paid" && inv.status !== "Void" && (
                         <Link
