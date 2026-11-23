@@ -6,6 +6,7 @@ export interface VendorCreditItem {
   description?: string;
   account?: string;
   quantity: number;
+  unit?: string;
   rate: number;
   taxRate?: number;
   taxAmount?: number;
@@ -86,6 +87,7 @@ const VendorCreditSchema = new Schema(
         description: { type: String, default: "" },
         account: { type: String, default: "Cost of Goods Sold" },
         quantity: { type: Number, default: 1, min: 0.001 },
+        unit: { type: String, default: "pcs" },
         rate: { type: Number, default: 0, min: 0 },
         taxRate: { type: Number, default: 0 },
         taxAmount: { type: Number, default: 0 },

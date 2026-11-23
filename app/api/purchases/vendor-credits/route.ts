@@ -277,6 +277,7 @@ export async function POST(request: Request) {
         description: it.description?.trim() || "",
         account: it.account || "Cost of Goods Sold",
         quantity: Math.max(0.001, Number(it.quantity) || 1),
+        unit: it.unit || "pcs",
         rate: Math.max(0, Number(it.rate) || 0),
         taxRate: Number(it.taxRate) || 0,
         taxAmount: Math.round(((Number(it.quantity || 1) * Number(it.rate || 0) * (Number(it.taxRate) || 0)) / 100) * 100) / 100,
@@ -316,6 +317,7 @@ export async function POST(request: Request) {
           quantity: it.quantity,
           rate: it.rate,
           name: it.name,
+          unit: it.unit || "pcs",
         })),
         actorId: String(session.user.id),
       });

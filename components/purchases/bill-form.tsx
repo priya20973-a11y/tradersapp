@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -64,6 +64,8 @@ interface BillFormProps {
 
 export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const purchaseOrderIdParam = searchParams?.get("purchaseOrderId") || searchParams?.get("poId") || "";
 
   // Loading states
   const [loadingData, setLoadingData] = useState(isEditMode);
@@ -264,6 +266,90 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
               })),
             );
           }
+        } else if (!isEditMode && purchaseOrderIdParam) {
+          try {
+            const poRes = await fetch(`/api/purchases/purchase-orders/${encodeURIComponent(purchaseOrderIdParam)}`);
+            if (poRes.ok) {
+              const poData = await poRes.json();
+              const po = poData?.purchaseOrder;
+              const poBill = poData?.bill;
+
+              if (poBill) {
+                setError(
+                  `A bill (${poBill.billNumber}) has already been generated for Purchase Order ${po?.purchaseOrderNumber || purchaseOrderIdParam}.`,
+                );
+              } else if (po) {
+                setOrderNumber(po.purchaseOrderNumber || "");
+                if (po.paymentTerms) {
+                  setPaymentTerms(po.paymentTerms);
+                  const calculated = calculateDueDate(
+                    po.orderDate ? po.orderDate.split("T")[0] : formatDateOnly(new Date()),
+                    po.paymentTerms,
+                  );
+                  if (calculated) setDueDate(calculated);
+                }
+                if (po.deliveryDate) {
+                  setDueDate(po.deliveryDate.split("T")[0]);
+                }
+                setSubject(`Purchase Bill for PO ${po.purchaseOrderNumber || ""}`);
+                if (po.notes) setNotes(po.notes);
+                if (po.termsAndConditions) setTermsAndConditions(po.termsAndConditions);
+                if (po.discount !== undefined) setDiscount(Number(po.discount) || 0);
+                if (po.discountType) setDiscountType(po.discountType === "amount" ? "amount" : "percent");
+                if (po.taxType === "TDS") {
+                  setTaxType("TDS");
+                } else if (po.taxType === "None") {
+                  setTaxType("None");
+                } else {
+                  setTaxType("GST");
+                }
+                if (po.taxRate !== undefined) setTaxRate(Number(po.taxRate) || 0);
+                if (po.adjustment !== undefined) setAdjustment(Number(po.adjustment) || 0);
+
+                if (po.vendorId) {
+                  const poVid = String(po.vendorId);
+                  setVendorId(poVid);
+                  if (!vendorOptions.some((v) => v.id === poVid)) {
+                    const fallbackVendor: VendorOption = {
+                      id: poVid,
+                      name: po.vendorName || "Vendor",
+                      email: po.vendorDetails?.email || "",
+                      phone: po.vendorDetails?.phone || "",
+                      gstin: po.vendorDetails?.gstin || "",
+                      state: po.vendorDetails?.address?.state || "",
+                    };
+                    vendorOptions = [fallbackVendor, ...vendorOptions];
+                    setVendors(vendorOptions);
+                  }
+                }
+
+                if (Array.isArray(po.items) && po.items.length > 0) {
+                  setItems(
+                    po.items.map((it: Partial<BillItemInput> & { customerName?: string }, idx: number) => ({
+                      id: `row-${idx + 1}`,
+                      itemId: it.itemId ? String(it.itemId) : undefined,
+                      name: it.name || "",
+                      description: it.description || "",
+                      account: it.account || "Cost of Goods Sold",
+                      quantity: Number(it.quantity) || 1,
+                      unit: it.unit || (it.itemId ? loadedItems.find((ci) => ci.id === String(it.itemId))?.unit || "" : ""),
+                      rate: Number(it.rate) || 0,
+                      taxRate: Number(it.taxRate) || 0,
+                      customerId: it.customerId ? String(it.customerId) : undefined,
+                      customerName: it.customerName || "",
+                      amount: Number(it.amount) || Math.round((Number(it.quantity || 1) * Number(it.rate || 0)) * 100) / 100,
+                    })),
+                  );
+                }
+
+                setNotice(
+                  `Pre-filled with details from Purchase Order ${po.purchaseOrderNumber}. Review and save to create the bill.`,
+                );
+              }
+            }
+          } catch (poErr) {
+            console.error("Error loading purchase order into bill form:", poErr);
+          }
         }
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to initialize bill form.");
@@ -273,7 +359,7 @@ export function BillForm({ initialId, isEditMode = false }: BillFormProps) {
     }
 
     void loadInitial();
-  }, [isEditMode, initialId]);
+  }, [isEditMode, initialId, purchaseOrderIdParam]);
 
   // Selected vendor metadata
   const selectedVendor = useMemo(() => {

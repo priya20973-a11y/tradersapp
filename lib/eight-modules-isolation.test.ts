@@ -125,6 +125,9 @@ describe("Eight Target Modules - Tenant Isolation & Zero Hardcoded Data", () => 
           catch: () => Promise.resolve(null),
         }),
       } as never);
+      vi.spyOn(Item, "findOne").mockReturnValue({
+        lean: () => Promise.resolve(null),
+      } as never);
       const createdDoc: { value: Record<string, unknown> | null } = { value: null };
       vi.spyOn(Item, "create").mockImplementation((async (doc: Record<string, unknown>) => {
         createdDoc.value = doc;

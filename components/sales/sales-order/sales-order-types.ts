@@ -104,12 +104,7 @@ export interface SalesApiResponse {
   error?: string;
 }
 
-export const salespersons = [
-  "Alice Trader",
-  "John Doe",
-  "Sales Manager",
-  "Executive Staff",
-];
+export const salespersons: string[] = [];
 
 export const paymentTermsOptions = [
   "Due on Receipt",

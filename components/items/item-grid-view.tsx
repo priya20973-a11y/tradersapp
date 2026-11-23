@@ -1,14 +1,15 @@
 "use client";
 
-import { ChevronRight, Package, Sparkles } from "lucide-react";
+import { ChevronRight, Package, Pencil, Sparkles } from "lucide-react";
 import { formatCurrency, type ItemRecord } from "./item-types";
 
 type ItemGridViewProps = {
   items: ItemRecord[];
   onSelectItem: (item: ItemRecord) => void;
+  onEditItem?: (item: ItemRecord) => void;
 };
 
-export function ItemGridView({ items, onSelectItem }: ItemGridViewProps) {
+export function ItemGridView({ items, onSelectItem, onEditItem }: ItemGridViewProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {items.map((item) => {
@@ -80,7 +81,11 @@ export function ItemGridView({ items, onSelectItem }: ItemGridViewProps) {
                     {formatCurrency(cPrice)}
                   </span>
                   {marginPercent !== null && (
-                    <span className="block text-[10px] font-bold text-emerald-600">
+                    <span
+                      className={`block text-[10px] font-bold ${
+                        marginPercent < 0 ? "text-red-500" : "text-emerald-600"
+                      }`}
+                    >
                       {marginPercent}% margin
                     </span>
                   )}
@@ -109,10 +114,26 @@ export function ItemGridView({ items, onSelectItem }: ItemGridViewProps) {
                 </div>
               )}
 
-              <span className="text-xs font-semibold text-blue-600 group-hover:underline flex items-center gap-0.5">
-                Details
-                <ChevronRight className="h-3.5 w-3.5" />
-              </span>
+              <div className="flex items-center gap-2">
+                {onEditItem && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditItem(item);
+                    }}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-slate-100 transition"
+                    title="Edit Item"
+                    aria-label={`Edit ${item.name}`}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                <span className="text-xs font-semibold text-blue-600 group-hover:underline flex items-center gap-0.5">
+                  Details
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </span>
+              </div>
             </div>
           </div>
         );

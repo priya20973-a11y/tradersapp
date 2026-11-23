@@ -903,73 +903,11 @@ export async function POST(request: Request) {
           await newPO.save().catch(() => null);
         }
 
-        // Check if a bill already exists for this PO
+        // Check if a bill already exists for this PO (do not auto-generate a bill)
         linkedBill = await PurchaseBill.findOne({
           organizationId: orgObjId,
           orderNumber: poNumber,
         }).catch(() => null);
-
-        if (!linkedBill) {
-          const sequence = await DocumentSequence.findOneAndUpdate(
-            { organizationId: orgObjId, modelName: "Purchase Bill" },
-            { $inc: { nextNumber: 1 } },
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          ).catch(() => null);
-
-          const bSeq = sequence?.nextNumber || 1;
-          const billNumber = `BILL-${String(bSeq).padStart(4, "0")}`;
-
-          const billItems = computedItems.map((item) => ({
-            itemId: item.itemId,
-            name: item.name,
-            description: item.description || "",
-            account: item.account || "Cost of Goods Sold",
-            quantity: item.quantity,
-            rate: item.rate,
-            taxRate: item.taxRate,
-            taxAmount: item.taxAmount,
-            customerId: data.customerId,
-            customerName: data.customerName || "",
-            amount: item.amount,
-          }));
-
-          const billDate = data.orderDate ? new Date(data.orderDate) : new Date();
-          const dueDate = data.deliveryDate ? new Date(data.deliveryDate) : undefined;
-
-          linkedBill = await PurchaseBill.create({
-            organizationId: orgObjId,
-            billNumber,
-            vendorId: resolvedVendorId,
-            vendorName: data.vendorName,
-            orderNumber: poNumber,
-            billDate,
-            dueDate,
-            paymentTerms: data.paymentTerms || "Due on Receipt",
-            accountsPayable: "Accounts Payable",
-            subject: `Purchase Bill for PO ${poNumber}`,
-            items: billItems,
-            subTotal: Math.round(calculatedSubtotal * 100) / 100,
-            discount: data.discount || 0,
-            discountType: data.discountType || "percent",
-            discountAmount: Math.round(orderDiscountAmount * 100) / 100,
-            taxType: data.taxType === "TDS" ? "TDS" : calculatedTaxTotal > 0 ? "GST" : "None",
-            taxRate: data.taxRate || 0,
-            taxAmount: Math.round(calculatedTaxTotal * 100) / 100,
-            cgst: Math.round(cgstSum * 100) / 100,
-            sgst: Math.round(sgstSum * 100) / 100,
-            igst: Math.round(igstSum * 100) / 100,
-            adjustment: data.adjustment || 0,
-            total: Math.max(0, calculatedTotal),
-            amountPaid: 0,
-            status: "Pending",
-            notes: data.notes || "",
-            termsAndConditions: data.termsAndConditions || "",
-            currency: "INR",
-          }).catch((err) => {
-            console.error("Auto-generating purchase bill failed:", err);
-            return null;
-          });
-        }
       } catch (integrationErr) {
         console.error("Payment module integration failed:", integrationErr);
       }

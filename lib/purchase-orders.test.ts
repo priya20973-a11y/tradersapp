@@ -228,6 +228,60 @@ describe("Purchase Order Module Schemas, Calculations & Contracts", () => {
       const pending = Math.max(0, ordered - received);
       expect(pending).toBe(450);
     });
+
+    it("formats Quantities Tracked display string with unit next to ordered quantity (e.g. 0 / 200 KG)", () => {
+      const itemsList = [
+        { id: "item-1", name: "Premium Sona Masoori Rice", unit: "KG" },
+        { id: "item-2", name: "Wheat Grain", unit: "MT" },
+      ];
+
+      const getItemUnit = (it: { itemId?: string; name?: string; unit?: string }) => {
+        const catalogItem = itemsList.find(
+          (ci) =>
+            (it.itemId && ci.id === it.itemId) ||
+            (ci.name && ci.name.trim().toLowerCase() === it.name?.trim().toLowerCase()),
+        );
+        return (catalogItem?.unit || it.unit || "").trim();
+      };
+
+      const formatQuantitiesTracked = (
+        received: number,
+        ordered: number,
+        items: Array<{ itemId?: string; name?: string; unit?: string }>,
+      ) => {
+        const seen = new Set<string>();
+        const units: string[] = [];
+        for (const it of items) {
+          const u = getItemUnit(it);
+          if (u && !seen.has(u.toLowerCase())) {
+            seen.add(u.toLowerCase());
+            units.push(u);
+          }
+        }
+        const orderUnit = units.join(", ");
+        return `${received} / ${ordered}${orderUnit ? ` ${orderUnit}` : ""}`;
+      };
+
+      // 1. Single item with KG from catalog
+      expect(
+        formatQuantitiesTracked(0, 200, [{ itemId: "item-1", name: "Premium Sona Masoori Rice" }]),
+      ).toBe("0 / 200 KG");
+
+      // 2. Single item with unit from line item details
+      expect(
+        formatQuantitiesTracked(0, 200, [{ name: "Custom Spices", unit: "KG" }]),
+      ).toBe("0 / 200 KG");
+
+      // 3. Partially received order
+      expect(
+        formatQuantitiesTracked(50, 200, [{ itemId: "item-1", name: "Premium Sona Masoori Rice" }]),
+      ).toBe("50 / 200 KG");
+
+      // 4. Order without unit
+      expect(
+        formatQuantitiesTracked(0, 200, [{ name: "Unknown" }]),
+      ).toBe("0 / 200");
+    });
   });
 
   describe("UI Component Files & Zoho-Inspired Feature Integrity", () => {
@@ -315,6 +369,18 @@ describe("Purchase Order Module Schemas, Calculations & Contracts", () => {
       expect(dirContent).toContain("Received & Fulfilled");
       expect(dirContent).toContain("statusFilter");
       expect(dirContent).toContain("handleOpenReceive");
+    });
+
+    it("displays the item's Unit next to the ordered quantity in Quantities Tracked column dynamically fetched from item details", () => {
+      // Verifies Quantities Tracked header
+      expect(dirContent).toContain("Quantities Tracked");
+      // Verifies item details fetch from /api/items
+      expect(dirContent).toContain('fetch("/api/items")');
+      // Verifies helper functions for unit resolution from item details & catalog
+      expect(dirContent).toContain("getItemUnit");
+      expect(dirContent).toContain("getOrderUnit");
+      // Verifies Quantities Tracked displays totalReceived / totalOrdered with dynamic unit
+      expect(dirContent).toContain("{totalReceived} / {totalOrdered}{orderUnit ? ` ${orderUnit}` : \"\"}");
     });
 
     it("integrates Configure button and ConfigurePoNumberModal in PurchaseOrderForm", () => {

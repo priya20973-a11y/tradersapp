@@ -1,13 +1,14 @@
 "use client";
 
-import { Check, Copy, Eye, Package, Sparkles } from "lucide-react";
-import { formatCurrency, type ItemRecord } from "./item-types";
+import { Check, Copy, Eye, Package, Pencil, Sparkles } from "lucide-react";
+import { formatCurrency, getMarginColorClass, type ItemRecord } from "./item-types";
 
 type ItemTableViewProps = {
   items: ItemRecord[];
   copiedSku: string | null;
   onCopySku: (sku: string, e: React.MouseEvent) => void;
   onSelectItem: (item: ItemRecord) => void;
+  onEditItem?: (item: ItemRecord) => void;
 };
 
 export function ItemTableView({
@@ -15,6 +16,7 @@ export function ItemTableView({
   copiedSku,
   onCopySku,
   onSelectItem,
+  onEditItem,
 }: ItemTableViewProps) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-xs">
@@ -133,15 +135,7 @@ export function ItemTableView({
                   <td className="px-4 py-3.5 text-right">
                     <div className="text-xs text-slate-600 font-medium">{formatCurrency(cPrice)}</div>
                     {marginPercent !== null && (
-                      <span
-                        className={`text-[10px] font-semibold ${
-                          marginPercent >= 20
-                            ? "text-emerald-600"
-                            : marginPercent > 0
-                            ? "text-blue-600"
-                            : "text-slate-400"
-                        }`}
-                      >
+                      <span className={`text-[10px] font-semibold ${getMarginColorClass(marginPercent)}`}>
                         {marginPercent}% margin
                       </span>
                     )}
@@ -177,17 +171,32 @@ export function ItemTableView({
 
                   {/* Action */}
                   <td className="px-4 py-3.5 text-center">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectItem(item);
-                      }}
-                      className="p-1 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-white transition"
-                      title="View Details"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEditItem?.(item);
+                        }}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition"
+                        title="Edit Item"
+                        aria-label={`Edit ${item.name}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectItem(item);
+                        }}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+                        title="View Details"
+                        aria-label={`View details for ${item.name}`}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

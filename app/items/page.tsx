@@ -38,6 +38,7 @@ export default function ItemsPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const [showModal, setShowModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<ItemRecord | null>(null);
+  const [editingItem, setEditingItem] = useState<ItemRecord | null>(null);
   const [copiedSku, setCopiedSku] = useState<string | null>(null);
 
   useEffect(() => {
@@ -81,6 +82,11 @@ export default function ItemsPage() {
     setTimeout(() => setCopiedSku(null), 2000);
   };
 
+  const handleEditItem = (item: ItemRecord) => {
+    setEditingItem(item);
+    setShowModal(true);
+  };
+
   const filteredItems = useMemo(() => {
     const searchLower = searchTerm.toLowerCase().trim();
     const result = items.filter((item) => {
@@ -89,6 +95,8 @@ export default function ItemsPage() {
         item.name.toLowerCase().includes(searchLower) ||
         (item.sku && item.sku.toLowerCase().includes(searchLower)) ||
         (item.unit && item.unit.toLowerCase().includes(searchLower)) ||
+        (item.commodityCategory && item.commodityCategory.toLowerCase().includes(searchLower)) ||
+        (item.category && item.category.toLowerCase().includes(searchLower)) ||
         (item.preferredVendor && item.preferredVendor.toLowerCase().includes(searchLower));
 
       if (!matchesSearch) return false;
@@ -157,11 +165,12 @@ export default function ItemsPage() {
             type="button"
             onClick={() => {
               const rows = [
-                ["ID", "Name", "SKU", "Type", "Unit", "Sales Price", "Cost Price", "Stock"],
+                ["ID", "Name", "SKU", "Category", "Type", "Unit", "Sales Price", "Cost Price", "Stock"],
                 ...filteredItems.map((i) => [
                   i.id || "",
                   `"${i.name.replace(/"/g, '""')}"`,
                   i.sku || "",
+                  i.commodityCategory || i.category || "",
                   i.type,
                   i.unit,
                   i.salesPrice || 0,
@@ -185,13 +194,17 @@ export default function ItemsPage() {
             <span>Export</span>
           </button>
 
-          <Link
-            href="/items/new"
+          <button
+            type="button"
+            onClick={() => {
+              setEditingItem(null);
+              setShowModal(true);
+            }}
             className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition hover:shadow focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2"
           >
             <Plus className="h-4 w-4" />
             <span>Add New Item</span>
-          </Link>
+          </button>
         </div>
       </div>
 
@@ -344,13 +357,17 @@ export default function ItemsPage() {
                 Clear Filters
               </button>
             )}
-            <Link
-              href="/items/new"
+            <button
+              type="button"
+              onClick={() => {
+                setEditingItem(null);
+                setShowModal(true);
+              }}
               className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition"
             >
               <Plus className="h-3.5 w-3.5" />
               Add First Item
-            </Link>
+            </button>
           </div>
         </div>
       ) : viewMode === "table" ? (
@@ -359,11 +376,13 @@ export default function ItemsPage() {
           copiedSku={copiedSku}
           onCopySku={handleCopySku}
           onSelectItem={(item) => setSelectedItem(item)}
+          onEditItem={handleEditItem}
         />
       ) : (
         <ItemGridView
           items={filteredItems}
           onSelectItem={(item) => setSelectedItem(item)}
+          onEditItem={handleEditItem}
         />
       )}
 
@@ -372,19 +391,40 @@ export default function ItemsPage() {
         <ItemQuickViewModal
           item={selectedItem}
           onClose={() => setSelectedItem(null)}
+          onEdit={handleEditItem}
         />
       )}
 
       {/* Modal for New Item Form if toggled */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-sm overflow-y-auto">
-          <div className="w-full max-w-3xl my-8">
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 md:p-6 bg-slate-950/50 backdrop-blur-sm overflow-y-auto overscroll-contain"
+          onClick={() => {
+            setShowModal(false);
+            setEditingItem(null);
+          }}
+        >
+          <div
+            className="w-full max-w-3xl my-auto sm:my-6 relative flex flex-col max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-3.5rem)] animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
             <NewItemForm
+              key={editingItem?.id || "new-item"}
+              inModal={true}
+              mode={editingItem ? "edit" : "create"}
+              initialData={editingItem}
+              itemId={editingItem?.id}
               onSuccess={() => {
                 setShowModal(false);
+                setEditingItem(null);
                 refreshItems();
               }}
-              onCancel={() => setShowModal(false)}
+              onCancel={() => {
+                setShowModal(false);
+                setEditingItem(null);
+              }}
             />
           </div>
         </div>

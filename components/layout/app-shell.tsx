@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { signOut } from "next-auth/react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getFinancialYear } from "@/lib/financial-year";
 
 
@@ -96,6 +96,13 @@ export function AppShell({
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
   const [orgInitial, setOrgInitial] = useState<string>("");
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const handleSidebarWheel = (e: React.WheelEvent<HTMLElement>) => {
+    if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      menuRef.current.scrollTop += e.deltaY;
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -167,14 +174,15 @@ export function AppShell({
       )}
       <div className="flex min-h-screen">
         <aside
-          className={`hidden shrink-0 overflow-y-auto border-r border-slate-200 bg-slate-950 text-slate-100 lg:flex lg:flex-col transition-all duration-300 ${
+          className={`hidden shrink-0 sticky top-0 h-screen max-h-screen overflow-hidden overscroll-contain border-r border-slate-200 bg-slate-950 text-slate-100 lg:flex lg:flex-col transition-all duration-300 z-30 ${
             sidebarCollapsed ? "w-20 p-2.5" : "w-72 p-4"
           }`}
           aria-label="Sidebar Navigation"
           data-collapsed={sidebarCollapsed ? "true" : "false"}
+          onWheel={handleSidebarWheel}
         >
           {/* BharatGodam Top Logo Header */}
-          <div className="mb-4">
+          <div className="mb-4 shrink-0">
             {!sidebarCollapsed ? (
               <div className="flex items-center justify-between gap-2.5">
                 <Link
@@ -237,7 +245,10 @@ export function AppShell({
             )}
           </div>
 
-          <div className="space-y-2">
+          <div
+            ref={menuRef}
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-2 pr-1 -mr-1 sidebar-scrollbar"
+          >
             {/* Dashboard */}
             <Link
               href="/"
@@ -623,7 +634,7 @@ export function AppShell({
           </div>
 
           <div
-            className={`mt-auto rounded-2xl border border-slate-800 bg-slate-900 transition-all ${
+            className={`mt-3 shrink-0 rounded-2xl border border-slate-800 bg-slate-900 transition-all ${
               sidebarCollapsed ? "p-2.5 flex justify-center" : "p-4"
             }`}
             title={`Finance year ${financialYear}`}

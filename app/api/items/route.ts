@@ -5,12 +5,14 @@ import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { Item, ItemPreference, Organization, PurchaseBill, SalesDocument } from "@/models";
 
-const itemInputSchema = z.object({
+export const itemInputSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(120),
   type: z.enum(["goods", "service"]).default("goods"),
   unit: z.string().trim().default("pcs"),
   sku: z.string().trim().optional(),
   hsnCode: z.string().trim().optional(),
+  commodityCategory: z.string().trim().optional(),
+  category: z.string().trim().optional(),
   trackSales: z.boolean().default(true),
   salesPrice: z.coerce.number().min(0).default(0),
   salesAccount: z.string().trim().default("Sales"),
@@ -101,6 +103,7 @@ export async function GET(request: Request) {
         type?: string;
         unit?: string;
         hsnCode?: string;
+        commodityCategory?: string;
         salesPrice?: number;
         gstRate?: number;
         purchasePrice?: number;
@@ -129,6 +132,7 @@ export async function GET(request: Request) {
           type: item.type ?? "goods",
           unit: item.unit ?? "pcs",
           hsnCode: item.hsnCode ?? "",
+          commodityCategory: item.commodityCategory ?? "",
           salesPrice: item.salesPrice ?? 0,
           gstRate: item.gstRate ?? 18,
           purchasePrice: item.purchasePrice ?? 0,
@@ -137,6 +141,7 @@ export async function GET(request: Request) {
           salesDescription: item.salesDescription ?? "",
           purchaseDescription: item.purchaseDescription ?? "",
           preferredVendor: item.preferredVendor ?? "",
+          openingStock: Number(item.openingStock) || 0,
           stock,
           inventoryTracking: inventoryEnabled,
           active: item.active ?? true,
@@ -195,11 +200,21 @@ export async function POST(request: Request) {
       data.sku?.trim() ||
       `SKU-${data.name.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    // Check SKU duplicate within organization
+    const existingSku = await Item.findOne({
+      organizationId: orgId,
+      sku: { $regex: new RegExp(`^${sku.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+    }).lean();
+    if (existingSku) {
+      return NextResponse.json({ error: "An item with this SKU already exists" }, { status: 409 });
+    }
+
     const newItem = await Item.create({
       organizationId: orgId,
       name: data.name,
       sku,
       hsnCode: data.hsnCode || undefined,
+      commodityCategory: data.commodityCategory || data.category || undefined,
       type: data.type,
       unit: data.unit,
       salesPrice: data.salesPrice,
@@ -225,6 +240,7 @@ export async function POST(request: Request) {
           sku: newItem.sku,
           type: newItem.type,
           unit: newItem.unit,
+          commodityCategory: newItem.commodityCategory ?? "",
           salesPrice: newItem.salesPrice,
           purchasePrice: newItem.purchasePrice,
           salesAccount: newItem.salesAccount,
@@ -238,6 +254,142 @@ export async function POST(request: Request) {
     );
   } catch (err: unknown) {
     console.error("POST /api/items error:", err);
+    if ((err as { code?: number })?.code === 11000) {
+      return NextResponse.json({ error: "An item with this SKU already exists" }, { status: 409 });
+    }
+    const message = err instanceof Error ? err.message : "Internal server error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function PUT(request: Request) {
+  try {
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const url = new URL(request.url);
+    const bodyRecord =
+      typeof body === "object" && body !== null
+        ? (body as Record<string, unknown>)
+        : null;
+    const id =
+      (typeof bodyRecord?.id === "string" && bodyRecord.id) ||
+      (typeof bodyRecord?._id === "string" && bodyRecord._id) ||
+      url.searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ error: "Item ID is required for update" }, { status: 400 });
+    }
+
+    const parseResult = itemInputSchema.safeParse(body);
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: parseResult.error.flatten().fieldErrors },
+        { status: 400 },
+      );
+    }
+
+    const data = parseResult.data;
+    const session = await getServerSession(authOptions).catch(() => null);
+    await connectToDatabase();
+
+    let orgId = session?.user?.organizationId;
+    if (session?.user?.id === "admin") {
+      const requestedOrgId = url.searchParams.get("organizationId");
+      if (requestedOrgId) orgId = requestedOrgId;
+    }
+    if (!orgId) {
+      return NextResponse.json({ error: "Unauthorized: organization context required" }, { status: 401 });
+    }
+
+    const item = await Item.findOne({ _id: id, organizationId: orgId });
+    if (!item) {
+      return NextResponse.json({ error: "Item not found" }, { status: 404 });
+    }
+
+    const itemDoc = item as {
+      _id: unknown;
+      name?: string;
+      sku?: string;
+      type?: "goods" | "service";
+      unit?: string;
+      commodityCategory?: string;
+      salesPrice?: number;
+      purchasePrice?: number;
+      salesAccount?: string;
+      purchaseAccount?: string;
+      salesDescription?: string;
+      purchaseDescription?: string;
+      preferredVendor?: string;
+      openingStock?: number;
+      active?: boolean;
+      save: () => Promise<unknown>;
+    };
+    const targetSku = (data.sku?.trim() || String(itemDoc.sku || "")).trim();
+    if (targetSku) {
+      const existingSku = await Item.findOne({
+        _id: { $ne: id },
+        organizationId: orgId,
+        sku: { $regex: new RegExp(`^${targetSku.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+      }).lean();
+      if (existingSku) {
+        return NextResponse.json({ error: "An item with this SKU already exists" }, { status: 409 });
+      }
+    }
+
+    const pref = await ItemPreference.findOne({ organizationId: orgId }).lean().catch(() => null);
+    const inventoryEnabled = Boolean(pref?.inventoryEnabled);
+
+    Object.assign(itemDoc, {
+      name: data.name,
+      sku: targetSku,
+      hsnCode: data.hsnCode || undefined,
+      commodityCategory: data.commodityCategory || data.category || undefined,
+      type: data.type,
+      unit: data.unit,
+      salesPrice: data.salesPrice,
+      purchasePrice: data.purchasePrice,
+      salesAccount: data.salesAccount,
+      salesDescription: data.salesDescription,
+      purchaseAccount: data.purchaseAccount,
+      purchaseDescription: data.purchaseDescription,
+      preferredVendor: data.preferredVendor,
+      trackSales: data.trackSales,
+      trackPurchase: data.trackPurchase,
+      inventoryTracking: inventoryEnabled,
+      openingStock: inventoryEnabled ? data.openingStock : itemDoc.openingStock,
+    });
+
+    await itemDoc.save();
+
+    return NextResponse.json({
+      message: "Item updated successfully",
+      item: {
+        id: String(itemDoc._id),
+        name: itemDoc.name,
+        sku: itemDoc.sku,
+        type: itemDoc.type,
+        unit: itemDoc.unit,
+        commodityCategory: itemDoc.commodityCategory ?? "",
+        salesPrice: itemDoc.salesPrice,
+        purchasePrice: itemDoc.purchasePrice,
+        salesAccount: itemDoc.salesAccount,
+        purchaseAccount: itemDoc.purchaseAccount,
+        salesDescription: itemDoc.salesDescription,
+        purchaseDescription: itemDoc.purchaseDescription,
+        preferredVendor: itemDoc.preferredVendor,
+        stock: itemDoc.openingStock,
+        active: itemDoc.active,
+      },
+    });
+  } catch (err: unknown) {
+    console.error("PUT /api/items error:", err);
+    if ((err as { code?: number })?.code === 11000) {
+      return NextResponse.json({ error: "An item with this SKU already exists" }, { status: 409 });
+    }
     const message = err instanceof Error ? err.message : "Internal server error";
     return NextResponse.json({ error: message }, { status: 500 });
   }

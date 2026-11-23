@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { Check, Plus, Search, X } from "lucide-react";
 import { type CustomerOption, type ItemOption } from "./sales-order-types";
+import { saveStoredSalesperson } from "./salesperson-storage";
 
 type SearchCustomerModalProps = {
   isOpen: boolean;
@@ -400,6 +402,153 @@ export function SequenceModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+export type QuickAddSalespersonModalProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: (salespersonName: string) => void;
+};
+
+export function QuickAddSalespersonModal({
+  isOpen,
+  onClose,
+  onSuccess,
+}: QuickAddSalespersonModalProps) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError("Sales Person name is required");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      // 1. Save locally for instant persistence
+      saveStoredSalesperson(trimmedName);
+
+      // 2. Persist to API database
+      await fetch("/api/salespersons", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmedName,
+          email: email.trim() || undefined,
+          phone: phone.trim() || undefined,
+        }),
+      }).catch(() => null);
+
+      onSuccess(trimmedName);
+      setName("");
+      setEmail("");
+      setPhone("");
+      onClose();
+    } catch {
+      onSuccess(trimmedName);
+      setName("");
+      setEmail("");
+      setPhone("");
+      onClose();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+      <form
+        onSubmit={handleSubmit}
+        className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95"
+      >
+        <div className="flex items-center justify-between pb-3.5 border-b border-slate-100">
+          <h3 className="text-base font-bold text-slate-900 tracking-tight">Add New Sales Person</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100 transition cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="mt-3 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
+            {error}
+          </div>
+        )}
+
+        <div className="py-4 space-y-3.5">
+          <div>
+            <label className="text-xs font-semibold text-slate-700 block mb-1.5">
+              Sales Person Name<span className="text-rose-500 ml-0.5">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (error) setError(null);
+              }}
+              placeholder="e.g. Anita Sharma"
+              className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-700 block mb-1.5">Email Address</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="sales@company.com"
+              className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-700 block mb-1.5">Phone Number</label>
+            <input
+              type="text"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+91 98765 43210"
+              className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2.5 pt-3.5 border-t border-slate-100">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-xs font-semibold border border-slate-200 rounded-xl hover:bg-slate-50 transition cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={loading || !name.trim()}
+            className="px-5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl shadow-sm transition cursor-pointer active:scale-98"
+          >
+            {loading ? "Saving..." : "Save Sales Person"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

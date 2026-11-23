@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
   Calendar,
+  Check,
   CheckCircle2,
+  ChevronDown,
   FileText,
   Gauge,
   Info,
@@ -14,6 +16,7 @@ import {
   Plus,
   Receipt,
   Save,
+  Search,
   Settings,
   Table,
   Trash2,
@@ -59,32 +62,8 @@ export interface ExpenseReceipt {
   uploadedAt: string;
 }
 
-export const standardAccounts = [
-  "Freight & Shipping Charges",
-  "Travel & Conveyance",
-  "Office Supplies & Stationery",
-  "Meals & Entertainment",
-  "Warehouse & Storage Maintenance",
-  "Vehicle Fuel & Running Expenses",
-  "Printing & Courier Services",
-  "Quality Inspection & Testing Fees",
-  "Advertising & Marketing",
-  "Software & Technology Subscriptions",
-  "Legal & Professional Charges",
-  "Repairs & Maintenance",
-  "Utilities - Electricity & Water",
-  "Telephone & Internet Charges",
-  "Bank & Financial Charges",
-];
-
-export const paidThroughAccounts = [
-  "Petty Cash Account",
-  "HDFC Primary Bank",
-  "ICICI Operational Bank",
-  "State Bank of India (Current)",
-  "Company Corporate Card",
-  "Employee Personal Funds (Reimbursable)",
-];
+export { standardAccounts, paidThroughAccounts } from "@/lib/expense-constants";
+import { standardAccounts, paidThroughAccounts } from "@/lib/expense-constants";
 
 const initialPreferences: MileagePreferences = {
   category: "Standard Business Travel",
@@ -92,6 +71,227 @@ const initialPreferences: MileagePreferences = {
   startDate: "2026-04-01",
   rate: 12.0,
 };
+
+export interface ExpenseVendorOption {
+  id: string;
+  name: string;
+  companyName?: string;
+  email?: string;
+  gstin?: string;
+}
+
+interface SearchableVendorDropdownProps {
+  value: string;
+  onChange: (value: string) => void;
+  options: ExpenseVendorOption[];
+  disabled?: boolean;
+  placeholder?: string;
+}
+
+export function SearchableVendorDropdown({
+  value,
+  onChange,
+  options,
+  disabled = false,
+  placeholder = "Select or search vendor...",
+}: SearchableVendorDropdownProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const filteredOptions = useMemo(() => {
+    if (!search.trim()) return options;
+    const q = search.toLowerCase().trim();
+    return options.filter(
+      (v) =>
+        v.name.toLowerCase().includes(q) ||
+        (v.companyName && v.companyName.toLowerCase().includes(q)) ||
+        (v.gstin && v.gstin.toLowerCase().includes(q)) ||
+        (v.email && v.email.toLowerCase().includes(q)),
+    );
+  }, [options, search]);
+
+  const exactMatch = useMemo(() => {
+    if (!search.trim()) return true;
+    const q = search.trim().toLowerCase();
+    return options.some((v) => v.name.toLowerCase() === q);
+  }, [options, search]);
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      {/* Hidden standard accessible select for screen-readers & form automation */}
+      <select
+        aria-label="Vendor / Merchant"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        tabIndex={-1}
+        className="sr-only"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((opt, idx) => (
+          <option key={`${opt.id || opt.name}-${idx}`} value={opt.name}>
+            {opt.name}
+          </option>
+        ))}
+        {value && !options.some((o) => o.name === value) && (
+          <option value={value}>{value}</option>
+        )}
+      </select>
+
+      {/* Main trigger button */}
+      <div className="flex items-center">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            if (!disabled) {
+              setIsOpen((prev) => !prev);
+              if (!isOpen) setSearch("");
+            }
+          }}
+          className={`w-full h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs flex items-center justify-between outline-none transition text-left ${
+            disabled
+              ? "bg-slate-50 text-slate-500 cursor-not-allowed"
+              : "hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 cursor-pointer"
+          }`}
+        >
+          <span className={`truncate mr-2 ${value ? "font-medium text-slate-900" : "text-slate-400"}`}>
+            {value || (disabled ? "No vendor specified" : placeholder)}
+          </span>
+          <div className="flex items-center gap-1.5 flex-shrink-0 text-slate-400">
+            {value && !disabled && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChange("");
+                  setSearch("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.stopPropagation();
+                    onChange("");
+                    setSearch("");
+                  }
+                }}
+                title="Clear vendor"
+                className="hover:text-slate-600 p-0.5 rounded cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </span>
+            )}
+            <ChevronDown
+              className={`h-4 w-4 transition-transform duration-200 ${isOpen ? "rotate-180 text-blue-600" : ""}`}
+            />
+          </div>
+        </button>
+      </div>
+
+      {/* Dropdown Popover */}
+      {isOpen && !disabled && (
+        <div className="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl animate-in fade-in duration-150 flex flex-col">
+          <div className="p-2 border-b border-slate-100 flex items-center gap-2 bg-slate-50/70">
+            <Search className="h-3.5 w-3.5 text-slate-400 ml-1 flex-shrink-0" />
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search vendor name, company, or GSTIN..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-transparent text-xs text-slate-900 placeholder:text-slate-400 outline-none"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+
+          <div className="overflow-y-auto max-h-52 p-1 space-y-0.5">
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((v, idx) => {
+                const isSelected = value.toLowerCase() === v.name.toLowerCase();
+                return (
+                  <button
+                    key={`${v.id || v.name}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      onChange(v.name);
+                      setIsOpen(false);
+                      setSearch("");
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-xs transition flex items-center justify-between cursor-pointer ${
+                      isSelected
+                        ? "bg-blue-50 text-blue-900 font-medium"
+                        : "hover:bg-slate-50 text-slate-800"
+                    }`}
+                  >
+                    <div className="min-w-0 pr-2">
+                      <div className="font-medium truncate">{v.name}</div>
+                      {(v.companyName || v.gstin) && (
+                        <div className="text-[10px] text-slate-400 truncate">
+                          {v.companyName && <span>{v.companyName}</span>}
+                          {v.companyName && v.gstin && <span> • </span>}
+                          {v.gstin && <span className="font-mono">GST: {v.gstin}</span>}
+                        </div>
+                      )}
+                    </div>
+                    {isSelected && <Check className="h-3.5 w-3.5 text-blue-600 flex-shrink-0 ml-1" />}
+                  </button>
+                );
+              })
+            ) : (
+              <div className="p-3 text-center text-xs text-slate-400">
+                No vendors found
+              </div>
+            )}
+
+            {search.trim() && !exactMatch && (
+              <button
+                type="button"
+                onClick={() => {
+                  onChange(search.trim());
+                  setIsOpen(false);
+                  setSearch("");
+                }}
+                className="w-full text-left px-3 py-2 rounded-lg text-xs text-blue-600 hover:bg-blue-50 transition flex items-center gap-2 cursor-pointer font-medium border-t border-slate-100"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span className="truncate">Use &quot;{search.trim()}&quot; as vendor / merchant</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ExpenseFormProps {
   initialData?: Record<string, unknown>;
@@ -119,7 +319,24 @@ export function ExpenseForm({
 
   // Dynamic Options
   const [vendorsList, setVendorsList] = useState<string[]>([]);
+  const [vendorOptions, setVendorOptions] = useState<ExpenseVendorOption[]>([]);
   const [customersList, setCustomersList] = useState<string[]>([]);
+  const [expenseAccounts, setExpenseAccounts] = useState<string[]>(() => {
+    const itemAccounts = Array.isArray(initialData?.items)
+      ? (initialData.items as Array<{ expenseAccount?: string }>)
+          .map((item) => item.expenseAccount?.trim())
+          .filter((account): account is string => Boolean(account))
+      : [];
+    return [...new Set([...standardAccounts, ...itemAccounts])];
+  });
+
+  // New Account Modal State
+  const [showNewAccountModal, setShowNewAccountModal] = useState(false);
+  const [targetRowIdForNewAccount, setTargetRowIdForNewAccount] = useState<string | null>(null);
+  const [newAccountName, setNewAccountName] = useState("");
+  const [newAccountCode, setNewAccountCode] = useState("");
+  const [savingAccount, setSavingAccount] = useState(false);
+  const [newAccountError, setNewAccountError] = useState<string | null>(null);
 
   // Preferences Modal State
   const [showPrefModal, setShowPrefModal] = useState(false);
@@ -263,7 +480,26 @@ export function ExpenseForm({
   } | null>(null);
   const [, setErrors] = useState<Record<string, string>>({});
 
-  // Fetch preferences and vendors/customers on mount
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (initialData?.vendor !== undefined) {
+        setExpenseVendor(String(initialData.vendor || ""));
+      }
+      if (Array.isArray(initialData?.items)) {
+        const itemAccounts = (initialData.items as Array<{ expenseAccount?: string }>)
+          .map((item) => item.expenseAccount?.trim())
+          .filter((account): account is string => Boolean(account));
+        if (itemAccounts.length > 0) {
+          setExpenseAccounts((previous) => [
+            ...new Set([...previous, ...itemAccounts]),
+          ]);
+        }
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [initialData]);
+
+  // Fetch preferences, vendors/customers, and chart of accounts on mount
   useEffect(() => {
     let mounted = true;
 
@@ -276,15 +512,56 @@ export function ExpenseForm({
       })
       .catch(() => {});
 
-    // Load Vendors
+    // Load Chart of Accounts for Expense
+    const orgParam =
+      searchParams?.get("organizationId") ||
+      (typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("organizationId")
+        : "");
+    const coaUrl =
+      "/api/accounting/chart-of-accounts?accountType=Expense" +
+      (orgParam ? `&organizationId=${encodeURIComponent(orgParam)}` : "");
+
+    fetch(coaUrl)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!mounted) return;
+        const dbAccounts = Array.isArray(data?.accounts)
+          ? data.accounts.map((a: { name?: string }) => a.name).filter(Boolean)
+          : [];
+        if (dbAccounts.length > 0) {
+          setExpenseAccounts((prev) => {
+            const set = new Set(prev);
+            const added: string[] = [];
+            for (const name of dbAccounts) {
+              if (!set.has(name)) {
+                set.add(name);
+                added.push(name);
+              }
+            }
+            return added.length > 0 ? [...prev, ...added] : prev;
+          });
+        }
+      })
+      .catch(() => {});
+
+    // Load Vendors from Vendor Master
     fetch("/api/vendors")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (!mounted) return;
-        const names = Array.isArray(data?.vendors)
-          ? data.vendors.map((v: { displayName?: string; name?: string }) => v.displayName || v.name).filter(Boolean)
-          : [];
-        setVendorsList(names);
+        const rawVendors = Array.isArray(data?.vendors) ? data.vendors : [];
+        const options: ExpenseVendorOption[] = rawVendors
+          .map((v: Record<string, unknown>) => ({
+            id: String(v.id || v._id || ""),
+            name: String(v.displayName || v.name || v.companyName || "Vendor"),
+            companyName: String(v.companyName || ""),
+            email: String(v.email || ""),
+            gstin: String(v.gstin || ""),
+          }))
+          .filter((v: ExpenseVendorOption) => v.name.trim().length > 0);
+        setVendorOptions(options);
+        setVendorsList(options.map((v) => v.name));
       })
       .catch(() => {});
 
@@ -304,6 +581,77 @@ export function ExpenseForm({
       mounted = false;
     };
   }, []);
+
+  // Save new Expense Account in Chart of Accounts
+  const handleCreateNewAccount = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = newAccountName.trim();
+    if (!trimmed) {
+      setNewAccountError("Account name is required.");
+      return;
+    }
+
+    // Prevent duplicate accounts
+    if (expenseAccounts.some((a) => a.toLowerCase() === trimmed.toLowerCase())) {
+      setNewAccountError(`Account "${trimmed}" already exists.`);
+      return;
+    }
+
+    setSavingAccount(true);
+    setNewAccountError(null);
+
+    try {
+      const orgParam =
+        searchParams?.get("organizationId") ||
+        (typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("organizationId")
+          : "");
+      const postUrl =
+        "/api/accounting/chart-of-accounts" +
+        (orgParam ? `?organizationId=${encodeURIComponent(orgParam)}` : "");
+
+      const res = await fetch(postUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmed,
+          code: newAccountCode.trim() || undefined,
+          accountType: "Expense",
+          normalBalance: "debit",
+          organizationId: orgParam || undefined,
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to create account in Chart of Accounts.");
+      }
+
+      const createdName = data?.account?.name || trimmed;
+
+      // Add to dropdown options
+      setExpenseAccounts((prev) => (prev.includes(createdName) ? prev : [...prev, createdName]));
+
+      // Automatically select newly created account in the Expense Account field
+      if (targetRowIdForNewAccount) {
+        handleUpdateExpenseRow(targetRowIdForNewAccount, "expenseAccount", createdName);
+      }
+
+      setShowNewAccountModal(false);
+      setNewAccountName("");
+      setNewAccountCode("");
+      setTargetRowIdForNewAccount(null);
+      setNotice({
+        type: "success",
+        message: `Account "${createdName}" added to Chart of Accounts and selected.`,
+      });
+    } catch (err: unknown) {
+      setNewAccountError(err instanceof Error ? err.message : "Failed to create account.");
+    } finally {
+      setSavingAccount(false);
+    }
+  };
 
   // Calculate Subtotals
   const totalExpenseAmount = expenseItems.reduce(
@@ -843,16 +1191,33 @@ export function ExpenseForm({
                             <select
                               disabled={isViewMode}
                               value={item.expenseAccount}
-                              onChange={(e) =>
-                                handleUpdateExpenseRow(item.id, "expenseAccount", e.target.value)
-                              }
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === "__add_new_account__") {
+                                  setTargetRowIdForNewAccount(item.id);
+                                  setNewAccountName("");
+                                  setNewAccountCode("");
+                                  setNewAccountError(null);
+                                  setShowNewAccountModal(true);
+                                } else {
+                                  handleUpdateExpenseRow(item.id, "expenseAccount", val);
+                                }
+                              }}
                               className="w-full h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs outline-none focus:border-blue-500"
                             >
-                              {standardAccounts.map((acc) => (
+                              {expenseAccounts.map((acc) => (
                                 <option key={acc} value={acc}>
                                   {acc}
                                 </option>
                               ))}
+                              {!isViewMode && (
+                                <option
+                                  value="__add_new_account__"
+                                  className="text-blue-600 font-semibold bg-blue-50/50"
+                                >
+                                  + Add New Account
+                                </option>
+                              )}
                             </select>
                           </td>
                           <td className="px-4 py-2.5">
@@ -932,20 +1297,13 @@ export function ExpenseForm({
                     <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                       Vendor / Merchant
                     </label>
-                    <input
-                      type="text"
-                      list="expense-vendors"
-                      disabled={isViewMode}
-                      placeholder="Select or enter vendor name"
+                    <SearchableVendorDropdown
                       value={expenseVendor}
-                      onChange={(e) => setExpenseVendor(e.target.value)}
-                      className="w-full h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50"
+                      onChange={setExpenseVendor}
+                      options={vendorOptions}
+                      disabled={isViewMode}
+                      placeholder="Select or search vendor..."
                     />
-                    <datalist id="expense-vendors">
-                      {vendorsList.map((v) => (
-                        <option key={v} value={v} />
-                      ))}
-                    </datalist>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1497,16 +1855,33 @@ export function ExpenseForm({
                           <select
                             disabled={isViewMode}
                             value={row.expenseAccount}
-                            onChange={(e) =>
-                              handleUpdateBulkRow(row.id, "expenseAccount", e.target.value)
-                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === "__add_new_account__") {
+                                setTargetRowIdForNewAccount(row.id);
+                                setNewAccountName("");
+                                setNewAccountCode("");
+                                setNewAccountError(null);
+                                setShowNewAccountModal(true);
+                              } else {
+                                handleUpdateBulkRow(row.id, "expenseAccount", val);
+                              }
+                            }}
                             className="w-full h-8 rounded-lg border border-slate-200 px-2 text-xs outline-none focus:border-blue-500"
                           >
-                            {standardAccounts.map((acc) => (
+                            {expenseAccounts.map((acc) => (
                               <option key={acc} value={acc}>
                                 {acc}
                               </option>
                             ))}
+                            {!isViewMode && (
+                              <option
+                                value="__add_new_account__"
+                                className="text-blue-600 font-semibold bg-blue-50/50"
+                              >
+                                + Add New Account
+                              </option>
+                            )}
                           </select>
                         </td>
                         <td className="px-2 py-2">
@@ -1809,6 +2184,106 @@ export function ExpenseForm({
                   className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2 transition disabled:opacity-50"
                 >
                   {savingPrefs ? "Saving..." : "Save Preferences"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ADD NEW EXPENSE ACCOUNT MODAL */}
+      {showNewAccountModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                  <Plus className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Add New Expense Account</h3>
+                  <p className="text-xs text-slate-500">Register account in Chart of Accounts</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNewAccountModal(false);
+                  setNewAccountError(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {newAccountError && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {newAccountError}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateNewAccount} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Account Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  autoFocus
+                  type="text"
+                  required
+                  placeholder="e.g. Courier & Delivery Expenses"
+                  value={newAccountName}
+                  onChange={(e) => {
+                    setNewAccountName(e.target.value);
+                    if (newAccountError) setNewAccountError(null);
+                  }}
+                  className="w-full h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Account Code (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. EXP-101"
+                  value={newAccountCode}
+                  onChange={(e) => setNewAccountCode(e.target.value)}
+                  className="w-full h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+
+              <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-[11px] text-slate-500 space-y-1">
+                <div className="flex justify-between">
+                  <span>Account Classification:</span>
+                  <span className="font-semibold text-slate-700">Expense</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Normal Balance:</span>
+                  <span className="font-semibold text-slate-700">Debit (Chart of Accounts)</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNewAccountModal(false);
+                    setNewAccountError(null);
+                  }}
+                  className="h-9 px-4 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingAccount || !newAccountName.trim()}
+                  className="h-9 px-4 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-700 transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-sm"
+                >
+                  {savingAccount && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  <span>Save Account</span>
                 </button>
               </div>
             </form>

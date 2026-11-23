@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { Info, Plus, Search, Settings } from "lucide-react";
 import {
   type CustomerOption,
@@ -8,6 +9,8 @@ import {
   paymentTermsOptions,
   salespersons,
 } from "./sales-order-types";
+import { QuickAddSalespersonModal } from "./sales-order-modals";
+import { getStoredSalespersons } from "./salesperson-storage";
 
 interface SalesOrderHeaderFieldsProps {
   customers: CustomerOption[];
@@ -37,6 +40,7 @@ interface SalesOrderHeaderFieldsProps {
   setDeliveryMethod: (method: string) => void;
   salesperson: string;
   setSalesperson: (sp: string) => void;
+  salespersonsList?: string[];
   onOpenSearchCustomer: () => void;
   onOpenAddCustomer: () => void;
   onOpenSequenceModal: () => void;
@@ -70,10 +74,60 @@ export function SalesOrderHeaderFields({
   setDeliveryMethod,
   salesperson,
   setSalesperson,
+  salespersonsList: propSalespersonsList,
   onOpenSearchCustomer,
   onOpenAddCustomer,
   onOpenSequenceModal,
 }: SalesOrderHeaderFieldsProps) {
+  const [internalSalespersons, setInternalSalespersons] = useState<string[]>(() => {
+    return getStoredSalespersons();
+  });
+  const [isAddSalespersonOpen, setIsAddSalespersonOpen] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    const fetchSalespersons = () => {
+      fetch("/api/salespersons")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!active) return;
+          const serverList: string[] = Array.isArray(data?.salespersons)
+            ? data.salespersons
+                .map((s: unknown) => (typeof s === "string" ? s : (s as { name?: string })?.name || ""))
+                .filter(Boolean)
+            : [];
+          const storedList = getStoredSalespersons();
+          const combined = Array.from(new Set([...serverList, ...storedList])).sort((a, b) =>
+            a.localeCompare(b),
+          );
+          setInternalSalespersons(combined);
+        })
+        .catch(() => {});
+    };
+
+    fetchSalespersons();
+
+    const handleUpdated = () => {
+      const stored = getStoredSalespersons();
+      setInternalSalespersons((prev) => Array.from(new Set([...prev, ...stored])).sort((a, b) => a.localeCompare(b)));
+    };
+
+    window.addEventListener("custom_salespersons_updated", handleUpdated);
+    return () => {
+      active = false;
+      window.removeEventListener("custom_salespersons_updated", handleUpdated);
+    };
+  }, []);
+
+  const allSalespersons = useMemo(() => {
+    const list = propSalespersonsList && propSalespersonsList.length > 0 ? propSalespersonsList : internalSalespersons;
+    const set = new Set(list);
+    if (salesperson && salesperson.trim() && !set.has(salesperson.trim())) {
+      set.add(salesperson.trim());
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [propSalespersonsList, internalSalespersons, salesperson]);
   return (
     <div className="space-y-4 max-w-4xl">
       {/* Customer Name* */}
@@ -336,21 +390,59 @@ export function SalesOrderHeaderFields({
       {/* Salesperson */}
       <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] items-center gap-2.5">
         <label className="text-xs sm:text-sm font-medium text-slate-700">Salesperson</label>
-        <div className="max-w-md">
+        <div className="max-w-md flex items-center gap-2">
           <select
             value={salesperson}
-            onChange={(e) => setSalesperson(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (
+                val === "__ADD_NEW__" ||
+                val === "Add New Sales Person" ||
+                val === "+ Add New Sales Person" ||
+                val === "ADD_NEW_SALESPERSON"
+              ) {
+                setIsAddSalespersonOpen(true);
+              } else {
+                setSalesperson(val);
+              }
+            }}
             className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 bg-white text-slate-800 transition shadow-2xs cursor-pointer"
           >
             <option value="">Select or Add Salesperson</option>
-            {salespersons.map((s) => (
+            {allSalespersons.map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>
             ))}
+            <option disabled value="">
+              ──────────
+            </option>
+            <option value="__ADD_NEW__" className="font-semibold text-blue-600 bg-blue-50">
+              + Add New Sales Person
+            </option>
           </select>
+          <button
+            type="button"
+            onClick={() => setIsAddSalespersonOpen(true)}
+            title="Add New Sales Person"
+            className="p-2 rounded-xl border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition cursor-pointer shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
         </div>
       </div>
+
+      <QuickAddSalespersonModal
+        isOpen={isAddSalespersonOpen}
+        onClose={() => setIsAddSalespersonOpen(false)}
+        onSuccess={(newSalesperson) => {
+          setInternalSalespersons((prev) =>
+            Array.from(new Set([...prev, newSalesperson])).sort((a, b) => a.localeCompare(b)),
+          );
+          setSalesperson(newSalesperson);
+          setIsAddSalespersonOpen(false);
+        }}
+      />
     </div>
   );
 }

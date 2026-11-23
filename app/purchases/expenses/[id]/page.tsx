@@ -86,6 +86,7 @@ export default async function ExpenseDetailPage({
       }
     >
       <ExpenseForm
+        key={id}
         initialData={expenseData}
         mode={requestedMode === "edit" ? "edit" : "view"}
         expenseId={id}

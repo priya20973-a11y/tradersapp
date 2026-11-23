@@ -33,13 +33,21 @@ export interface PurchaseOrderItem {
   account?: string;
   quantity: number;
   receivedQuantity: number;
-  unit: string;
+  unit?: string;
   rate: number;
   discount: number;
   discountType: "percent" | "amount";
   taxRate: number;
   taxAmount: number;
   amount: number;
+}
+
+interface CatalogItemDetail {
+  id: string;
+  _id?: string;
+  name: string;
+  sku?: string;
+  unit?: string;
 }
 
 export interface PurchaseOrderRecord {
@@ -105,6 +113,7 @@ export function PurchaseOrdersDirectory() {
   const [receiveNotes, setReceiveNotes] = useState("");
   const [isSubmittingReceive, setIsSubmittingReceive] = useState(false);
   const [refreshIndex, setRefreshIndex] = useState(0);
+  const [itemsList, setItemsList] = useState<CatalogItemDetail[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -124,6 +133,46 @@ export function PurchaseOrdersDirectory() {
       active = false;
     };
   }, [refreshIndex]);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/items")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!active) return;
+        if (data?.items && Array.isArray(data.items)) {
+          setItemsList(data.items);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [refreshIndex]);
+
+  const getItemUnit = (it: PurchaseOrderItem) => {
+    const catalogItem = itemsList.find(
+      (ci) =>
+        (it.itemId && (ci.id === String(it.itemId) || ci._id === String(it.itemId))) ||
+        (it.sku && ci.sku && ci.sku.trim().toLowerCase() === it.sku.trim().toLowerCase()) ||
+        (ci.name && ci.name.trim().toLowerCase() === it.name?.trim().toLowerCase()),
+    );
+    return (catalogItem?.unit || it.unit || "").trim();
+  };
+
+  const getOrderUnit = (order: PurchaseOrderRecord) => {
+    if (!order.items || order.items.length === 0) return "";
+    const seen = new Set<string>();
+    const units: string[] = [];
+    for (const it of order.items) {
+      const u = getItemUnit(it);
+      if (u && !seen.has(u.toLowerCase())) {
+        seen.add(u.toLowerCase());
+        units.push(u);
+      }
+    }
+    return units.join(", ");
+  };
 
   const fetchOrders = () => {
     setLoading(true);
@@ -486,6 +535,7 @@ export function PurchaseOrdersDirectory() {
                   const totalReceived = po.items?.reduce((s, it) => s + (Number(it.receivedQuantity) || 0), 0) || 0;
                   const pendingQty = Math.max(0, totalOrdered - totalReceived);
                   const percentReceived = totalOrdered > 0 ? Math.min(100, Math.round((totalReceived / totalOrdered) * 100)) : 0;
+                  const orderUnit = getOrderUnit(po);
 
                   return (
                     <tr key={po.id || po.purchaseOrderNumber} className="hover:bg-slate-50/80 transition group">
@@ -530,7 +580,7 @@ export function PurchaseOrdersDirectory() {
                       <td className="px-5 py-3.5">
                         <div className="flex items-center justify-between text-[11px] mb-1">
                           <span className="font-semibold text-slate-800">
-                            {totalReceived} / {totalOrdered}
+                            {totalReceived} / {totalOrdered}{orderUnit ? ` ${orderUnit}` : ""}
                           </span>
                           <span className="text-slate-500 text-[10px]">{percentReceived}%</span>
                         </div>
@@ -608,6 +658,14 @@ export function PurchaseOrdersDirectory() {
                             className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
                           >
                             <Eye className="h-3.5 w-3.5" />
+                          </Link>
+
+                          <Link
+                            href={`/purchases/bills/new?purchaseOrderId=${encodeURIComponent(po.id || po.purchaseOrderNumber)}`}
+                            title="+ New Bill"
+                            className="p-1.5 rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-600 transition"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
                           </Link>
 
                           <Link
@@ -748,12 +806,13 @@ export function PurchaseOrdersDirectory() {
               <div className="max-h-60 overflow-y-auto space-y-2 pr-1 divide-y divide-slate-100">
                 {activeReceivePO.items?.map((it) => {
                   const pending = Math.max(0, it.quantity - (it.receivedQuantity || 0));
+                  const itemUnit = getItemUnit(it);
                   return (
                     <div key={it.name} className="pt-2 first:pt-0 flex items-center justify-between gap-3 text-xs">
                       <div className="flex-1">
                         <div className="font-semibold text-slate-800">{it.name}</div>
                         <div className="text-[11px] text-slate-500">
-                          Ordered: {it.quantity} {it.unit} | Already Recvd: {it.receivedQuantity || 0} | Pending: {pending}
+                          Ordered: {it.quantity} {itemUnit} | Already Recvd: {it.receivedQuantity || 0} | Pending: {pending}
                         </div>
                       </div>
 
@@ -772,7 +831,7 @@ export function PurchaseOrdersDirectory() {
                           }
                           className="w-full rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs text-right font-semibold text-slate-900 outline-none focus:border-blue-500"
                         />
-                        <span className="text-[11px] text-slate-400">{it.unit}</span>
+                        <span className="text-[11px] text-slate-400">{itemUnit}</span>
                       </div>
                     </div>
                   );

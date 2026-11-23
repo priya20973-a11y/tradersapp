@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   Download,
   File,
   FileText,
@@ -27,6 +28,8 @@ import {
   MAX_ATTACHMENTS_COUNT,
   TCS_RATES,
 } from "@/lib/vendor-credit-utils";
+import { getAllUnitsList, getStoredCustomUnits, type UnitOption } from "@/components/items/unit-storage";
+import { SearchableUnitDropdown } from "./purchase-order-form";
 
 interface VendorOption {
   id: string;
@@ -53,9 +56,140 @@ export interface CreditItemRow {
   description: string;
   account: string;
   quantity: number;
+  unit?: string;
   rate: number;
   taxRate: number;
   amount: number;
+}
+
+export interface SearchableItemComboboxProps {
+  name: string;
+  itemId?: string;
+  itemsList: ItemOption[];
+  onSelectCatalogItem: (item: ItemOption) => void;
+  onNameChange: (name: string) => void;
+  disabled?: boolean;
+}
+
+export function SearchableItemCombobox({
+  name,
+  itemId,
+  itemsList,
+  onSelectCatalogItem,
+  onNameChange,
+  disabled = false,
+}: SearchableItemComboboxProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+    if (isOpen) {
+      document.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const filteredItems = useMemo(() => {
+    if (!name.trim()) return itemsList;
+    const q = name.toLowerCase().trim();
+    const matched = itemsList.filter(
+      (it) => it.name.toLowerCase().includes(q) || (it.sku && it.sku.toLowerCase().includes(q)),
+    );
+    return matched.length > 0 ? matched : itemsList;
+  }, [itemsList, name]);
+
+  return (
+    <div className="relative w-full" ref={containerRef}>
+      <div className="relative flex items-center">
+        <input
+          type="text"
+          value={name}
+          disabled={disabled}
+          onChange={(e) => {
+            onNameChange(e.target.value);
+            setIsOpen(true);
+          }}
+          onFocus={() => {
+            if (itemsList.length > 0) {
+              setIsOpen(true);
+            }
+          }}
+          placeholder="Item name or commodity details…"
+          className="w-full rounded-lg border border-slate-200 bg-white pl-2.5 pr-8 py-1.5 text-xs font-medium text-slate-900 outline-none focus:border-blue-500"
+        />
+        {itemsList.length > 0 && (
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => setIsOpen((prev) => !prev)}
+            className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+            title="Toggle catalog list"
+          >
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+          </button>
+        )}
+      </div>
+
+      {isOpen && itemsList.length > 0 && (
+        <div className="absolute left-0 top-full z-40 mt-1 max-h-56 w-full min-w-[280px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl animate-in fade-in duration-100">
+          <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-100 mb-1 flex items-center justify-between">
+            <span>Items Catalog</span>
+            <span>{filteredItems.length} available</span>
+          </div>
+          {filteredItems.map((it) => {
+            const isSelected = it.id === itemId;
+            return (
+              <button
+                key={it.id}
+                type="button"
+                onClick={() => {
+                  onSelectCatalogItem(it);
+                  setIsOpen(false);
+                }}
+                className={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition cursor-pointer ${
+                  isSelected ? "bg-blue-50 text-blue-900 font-semibold" : "hover:bg-slate-50 text-slate-800"
+                }`}
+              >
+                <div className="truncate">
+                  <div className="font-medium truncate">{it.name}</div>
+                  <div className="text-[10px] text-slate-400">
+                    {it.sku ? `SKU: ${it.sku} ` : ""}
+                    {it.unit ? `• Unit: ${it.unit}` : ""}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="font-semibold text-slate-900">
+                    ₹{Number(it.rate || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export interface CreditAttachmentItem {
@@ -104,6 +238,9 @@ export function VendorCreditForm({
   // Reference lists
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [itemsList, setItemsList] = useState<ItemOption[]>([]);
+  const [unitsList, setUnitsList] = useState<UnitOption[]>(() =>
+    getAllUnitsList(getStoredCustomUnits())
+  );
   const [loadingInitial, setLoadingInitial] = useState(true);
 
   // Form Details
@@ -135,6 +272,7 @@ export function VendorCreditForm({
       description: "",
       account: "Cost of Goods Sold",
       quantity: 1,
+      unit: "pcs",
       rate: 0,
       taxRate: 0,
       amount: 0,
@@ -177,15 +315,22 @@ export function VendorCreditForm({
       setLoadingInitial(true);
       setError(null);
       try {
-        const [res, locRes, billsRes] = await Promise.all([
+        const [res, locRes, billsRes, unitsRes] = await Promise.all([
           fetch("/api/purchases/vendor-credits"),
           fetch("/api/inventory/locations"),
           fetch("/api/purchases/bills"),
+          fetch("/api/units"),
         ]);
         if (res.ok) {
           const data = await res.json();
           setVendors(data.vendors || []);
           setItemsList(data.items || []);
+        }
+        if (unitsRes.ok) {
+          const uData = await unitsRes.json();
+          if (Array.isArray(uData?.units)) {
+            setUnitsList(getAllUnitsList([...getStoredCustomUnits(), ...uData.units]));
+          }
         }
         if (locRes.ok) {
           const locData = await locRes.json();
@@ -237,6 +382,7 @@ export function VendorCreditForm({
                 description: String(it.description || ""),
                 account: String(it.account || "Cost of Goods Sold"),
                 quantity: Number(it.quantity) || 1,
+                unit: String(it.unit || "pcs"),
                 rate: Number(it.rate) || 0,
                 taxRate: Number(it.taxRate) || 0,
                 amount: Math.round(Number(it.quantity || 1) * Number(it.rate || 0) * 100) / 100,
@@ -328,6 +474,7 @@ export function VendorCreditForm({
           itemId: matched.id,
           name: matched.name,
           account: matched.account || row.account,
+          unit: matched.unit || row.unit || "pcs",
           rate,
           amount: Math.round(row.quantity * rate * 100) / 100,
         };
@@ -344,6 +491,7 @@ export function VendorCreditForm({
         description: "",
         account: "Cost of Goods Sold",
         quantity: 1,
+        unit: "pcs",
         rate: 0,
         taxRate: 0,
         amount: 0,
@@ -360,6 +508,7 @@ export function VendorCreditForm({
           description: "",
           account: "Cost of Goods Sold",
           quantity: 1,
+          unit: "pcs",
           rate: 0,
           taxRate: 0,
           amount: 0,
@@ -388,6 +537,7 @@ export function VendorCreditForm({
       description: it.sku ? `SKU: ${it.sku}` : "",
       account: it.account || "Cost of Goods Sold",
       quantity: 1,
+      unit: it.unit || "pcs",
       rate: it.rate || 0,
       taxRate: 0,
       amount: Math.round((it.rate || 0) * 100) / 100,
@@ -529,6 +679,7 @@ export function VendorCreditForm({
           description: it.description?.trim() || "",
           account: it.account || "Cost of Goods Sold",
           quantity: Math.max(0.001, Number(it.quantity) || 1),
+          unit: it.unit || "pcs",
           rate: Math.max(0, Number(it.rate) || 0),
           taxRate: Number(it.taxRate) || 0,
           amount: Math.round(Number(it.quantity || 1) * Number(it.rate || 0) * 100) / 100,
@@ -996,13 +1147,14 @@ export function VendorCreditForm({
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto min-h-[340px] pb-28">
           <table className="w-full text-left text-xs">
             <thead>
-              <tr className="border-b border-slate-200 text-slate-500 uppercase tracking-wider font-semibold">
+              <tr className="border-b border-slate-200 text-slate-500 uppercase tracking-wider font-semibold whitespace-nowrap">
                 <th className="py-2.5 px-3 min-w-[280px]">Item Details *</th>
                 <th className="py-2.5 px-3 min-w-[180px]">Account</th>
                 <th className="py-2.5 px-3 w-28 text-right">Quantity</th>
+                <th className="py-2.5 px-3 w-32">Unit</th>
                 <th className="py-2.5 px-3 w-36 text-right">Rate (₹)</th>
                 <th className="py-2.5 px-3 w-36 text-right">Amount (₹)</th>
                 <th className="py-2.5 px-2 w-10 text-center"></th>
@@ -1013,30 +1165,21 @@ export function VendorCreditForm({
                 <tr key={row.id} className="hover:bg-slate-50/60 transition group">
                   {/* Item Details */}
                   <td className="py-2.5 px-3 align-top space-y-1">
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        value={row.name}
-                        onChange={(e) => handleItemChange(row.id, "name", e.target.value)}
-                        placeholder="Item name or commodity details…"
-                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 outline-none focus:border-blue-500"
-                      />
-                      {itemsList.length > 0 && (
-                        <select
-                          value={row.itemId || ""}
-                          onChange={(e) => handleSelectItem(row.id, e.target.value)}
-                          title="Pick item from catalog"
-                          className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-600 outline-none hover:bg-white"
-                        >
-                          <option value="">Catalog</option>
-                          {itemsList.map((it) => (
-                            <option key={it.id} value={it.id}>
-                              {it.name} (₹{it.rate || 0})
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
+                    <SearchableItemCombobox
+                      name={row.name}
+                      itemId={row.itemId}
+                      itemsList={itemsList}
+                      onSelectCatalogItem={(it) => handleSelectItem(row.id, it.id)}
+                      onNameChange={(val) => {
+                        handleItemChange(row.id, "name", val);
+                        if (row.itemId) {
+                          const matched = itemsList.find((x) => x.id === row.itemId);
+                          if (matched && matched.name !== val) {
+                            handleItemChange(row.id, "itemId", undefined);
+                          }
+                        }
+                      }}
+                    />
                     <input
                       type="text"
                       value={row.description}
@@ -1070,6 +1213,15 @@ export function VendorCreditForm({
                       value={row.quantity}
                       onChange={(e) => handleItemChange(row.id, "quantity", e.target.value)}
                       className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-500 text-right"
+                    />
+                  </td>
+
+                  {/* Unit */}
+                  <td className="py-2.5 px-3 align-top">
+                    <SearchableUnitDropdown
+                      value={row.unit || "pcs"}
+                      onChange={(newUnit) => handleItemChange(row.id, "unit", newUnit)}
+                      unitsList={unitsList}
                     />
                   </td>
 

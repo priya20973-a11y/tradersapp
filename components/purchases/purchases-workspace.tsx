@@ -389,8 +389,9 @@ export function PurchasesWorkspace({ section }: { section: PurchasesSection }) {
 
       {/* Main Table */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-slate-200 text-left">
-          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-600">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-left">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-600 whitespace-nowrap">
             <tr>
               {config.columns.map((col, index) => (
                 <th key={index} className="px-6 py-3.5">
@@ -545,6 +546,7 @@ export function PurchasesWorkspace({ section }: { section: PurchasesSection }) {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* New Record Modal */}

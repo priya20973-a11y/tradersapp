@@ -7,7 +7,7 @@ export const metadata = {
 
 export default function NewItemPage() {
   return (
-    <div className="max-w-4xl mx-auto py-2">
+    <div className="max-w-4xl mx-auto py-4 sm:py-6 lg:py-8 px-2 sm:px-4">
       <NewItemForm />
     </div>
   );

@@ -42,6 +42,9 @@ export * from "./item-preference";
 // Re-export payment term models and types
 export * from "./payment-term";
 
+// Re-export salesperson models and types
+export * from "./salesperson";
+
 const BankDetailsSchema = new Schema(
   {
     accountHolderName: { type: String, trim: true },

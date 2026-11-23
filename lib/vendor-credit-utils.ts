@@ -16,6 +16,7 @@ export const vendorCreditItemSchema = z.object({
   description: z.string().default(""),
   account: z.string().default("Cost of Goods Sold"),
   quantity: z.coerce.number().min(0.001, "Quantity must be greater than 0").default(1),
+  unit: z.string().optional().default("pcs"),
   rate: z.coerce.number().min(0, "Rate must be 0 or positive").default(0),
   taxRate: z.coerce.number().default(0),
   amount: z.coerce.number().default(0),

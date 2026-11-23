@@ -555,20 +555,21 @@ export function BillsDirectory({
 
       {/* Main Table */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-slate-200 text-left">
-          <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-            <tr>
-              <th className="px-6 py-3.5">Date</th>
-              <th className="px-6 py-3.5">Bill #</th>
-              <th className="px-6 py-3.5">Vendor Name</th>
-              <th className="px-6 py-3.5">Order #</th>
-              <th className="px-6 py-3.5">Due Date</th>
-              <th className="px-6 py-3.5">Status</th>
-              <th className="px-6 py-3.5 text-right">Amount</th>
-              <th className="px-6 py-3.5 text-right">Balance Due</th>
-              <th className="px-6 py-3.5 text-center">Actions</th>
-            </tr>
-          </thead>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-left">
+            <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-600 whitespace-nowrap">
+              <tr>
+                <th className="px-6 py-3.5">Date</th>
+                <th className="px-6 py-3.5">Bill #</th>
+                <th className="px-6 py-3.5">Vendor Name</th>
+                <th className="px-6 py-3.5">Order #</th>
+                <th className="px-6 py-3.5">Due Date</th>
+                <th className="px-6 py-3.5">Status</th>
+                <th className="px-6 py-3.5 text-right">Amount</th>
+                <th className="px-6 py-3.5 text-right">Balance Due</th>
+                <th className="px-6 py-3.5 text-center">Actions</th>
+              </tr>
+            </thead>
           <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
             {loading ? (
               <tr>
@@ -784,6 +785,7 @@ export function BillsDirectory({
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Record Payment Modal */}

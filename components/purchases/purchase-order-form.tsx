@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Building2,
   CheckCircle2,
+  ChevronDown,
   CreditCard,
   Edit2,
   FileText,
@@ -35,6 +36,11 @@ import {
   ConfigurePoNumberModal,
   type PurchaseOrderPreferencesData,
 } from "./configure-po-number-modal";
+import {
+  getAllUnitsList,
+  getStoredCustomUnits,
+  type UnitOption,
+} from "@/components/items/unit-storage";
 
 export type PurchaseOrderFormMode = "create" | "edit" | "view";
 
@@ -164,6 +170,192 @@ const defaultOrgAddress = {
   phone: "+91 22 2789 5400",
 };
 
+export interface SearchableUnitDropdownProps {
+  value: string;
+  onChange: (unit: string) => void;
+  unitsList: UnitOption[];
+  disabled?: boolean;
+}
+
+export function SearchableUnitDropdown({
+  value,
+  onChange,
+  unitsList,
+  disabled = false,
+}: SearchableUnitDropdownProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+        setSearchQuery("");
+      }
+    }
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+        setSearchQuery("");
+      }
+    }
+    if (isOpen) {
+      document.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  // Combine system units with the currently assigned unit if it's custom / legacy
+  const allAvailableUnits = useMemo(() => {
+    const map = new Map<string, UnitOption>();
+    for (const u of unitsList) {
+      if (u?.value) map.set(u.value.toLowerCase(), u);
+    }
+    if (value && value.trim()) {
+      const key = value.trim().toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, { value: value.trim(), label: `${value.trim()} (Custom)` });
+      }
+    }
+    return Array.from(map.values());
+  }, [unitsList, value]);
+
+  const filteredUnits = useMemo(() => {
+    if (!searchQuery.trim()) return allAvailableUnits;
+    const q = searchQuery.toLowerCase().trim();
+    return allAvailableUnits.filter(
+      (u) => u.value.toLowerCase().includes(q) || u.label.toLowerCase().includes(q),
+    );
+  }, [allAvailableUnits, searchQuery]);
+
+  const isCustomSearchMatch =
+    searchQuery.trim().length > 0 &&
+    !allAvailableUnits.some(
+      (u) => u.value.toLowerCase() === searchQuery.trim().toLowerCase(),
+    );
+
+  const displayUnit = value || "pcs";
+
+  return (
+    <div className="relative inline-block text-left" ref={dropdownRef}>
+      {/* Hidden accessible select for test automation & form accessibility */}
+      <select
+        aria-label="Unit"
+        tabIndex={-1}
+        value={value || "pcs"}
+        onChange={(e) => onChange(e.target.value)}
+        className="sr-only"
+      >
+        {allAvailableUnits.map((u) => (
+          <option key={u.value} value={u.value}>
+            {u.label}
+          </option>
+        ))}
+      </select>
+
+      {/* Dropdown trigger button */}
+      <button
+        type="button"
+        role="combobox"
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        disabled={disabled}
+        onClick={() => setIsOpen((prev) => !prev)}
+        title="Select unit of measurement"
+        className="w-20 sm:w-24 rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-800 outline-none hover:bg-slate-50 hover:border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 flex items-center justify-between transition cursor-pointer disabled:opacity-50"
+      >
+        <span className="truncate text-[11px] font-bold text-slate-900">{displayUnit}</span>
+        <ChevronDown
+          className={`h-3 w-3 text-slate-400 shrink-0 ml-1 transition-transform duration-150 ${
+            isOpen ? "rotate-180 text-blue-600" : ""
+          }`}
+        />
+      </button>
+
+      {/* Searchable dropdown menu */}
+      {isOpen && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl animate-in fade-in duration-100">
+          {/* Search box */}
+          <div className="relative mb-1.5">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search unit (kg, MT, pcs)..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              autoFocus
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-8 pr-2.5 py-1.5 text-xs outline-none focus:border-blue-500 focus:bg-white"
+            />
+          </div>
+
+          {/* Units list */}
+          <div className="max-h-48 overflow-y-auto divide-y divide-slate-100" role="listbox">
+            {filteredUnits.map((u) => {
+              const isSelected = value?.toLowerCase() === u.value?.toLowerCase();
+              return (
+                <button
+                  key={u.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => {
+                    onChange(u.value);
+                    setIsOpen(false);
+                    setSearchQuery("");
+                  }}
+                  className={`w-full text-left px-2.5 py-1.5 text-xs rounded-lg transition flex items-center justify-between cursor-pointer ${
+                    isSelected
+                      ? "bg-blue-50 text-blue-700 font-bold"
+                      : "hover:bg-slate-50 text-slate-700"
+                  }`}
+                >
+                  <span className="font-semibold">{u.value}</span>
+                  <span className="text-[10px] text-slate-400 truncate max-w-[120px] ml-1">
+                    {u.label}
+                  </span>
+                </button>
+              );
+            })}
+
+            {/* Custom entry if user typed something not in list */}
+            {isCustomSearchMatch && (
+              <button
+                type="button"
+                onClick={() => {
+                  onChange(searchQuery.trim());
+                  setIsOpen(false);
+                  setSearchQuery("");
+                }}
+                className="w-full text-left px-2.5 py-1.5 text-xs rounded-lg text-blue-600 hover:bg-blue-50 transition font-medium cursor-pointer"
+              >
+                + Use &quot;{searchQuery.trim()}&quot; as unit
+              </button>
+            )}
+
+            {filteredUnits.length === 0 && !isCustomSearchMatch && (
+              <div className="px-2 py-3 text-center text-xs text-slate-400">
+                No units matching &quot;{searchQuery}&quot;
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface PurchaseOrderFormProps {
   initialData?: Partial<PurchaseOrderRecord>;
   mode?: PurchaseOrderFormMode;
@@ -183,6 +375,9 @@ export function PurchaseOrderForm({
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [itemsCatalog, setItemsCatalog] = useState<ItemCatalogOption[]>([]);
+  const [unitsList, setUnitsList] = useState<UnitOption[]>(() =>
+    getAllUnitsList(getStoredCustomUnits()),
+  );
 
   // Bulk Add Items Modal State
   const [showBulkAddModal, setShowBulkAddModal] = useState(false);
@@ -345,6 +540,39 @@ export function PurchaseOrderForm({
   >(() => (initialData?.attachments as Array<{ id: string; name: string; size: number; type: string; uploadedAt: string }>) || []);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
 
+  // Linked Bill State in View Mode
+  const [linkedBill, setLinkedBill] = useState<{
+    id: string;
+    billNumber: string;
+    total: number;
+    amountPaid: number;
+    balanceDue: number;
+    status: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!isViewMode) return;
+    const targetId = purchaseOrderId || poNumber;
+    if (!targetId) return;
+
+    let isMounted = true;
+    fetch(`/api/purchases/purchase-orders/${encodeURIComponent(targetId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isMounted) return;
+        if (data?.bill) {
+          setLinkedBill(data.bill);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to check linked bill for purchase order:", err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isViewMode, purchaseOrderId, poNumber]);
+
   // Status and Receiving Log in View Mode
   const [currentStatus, setCurrentStatus] = useState<PurchaseOrderStatus>(
     () => initialData?.status || "Draft",
@@ -441,8 +669,26 @@ export function PurchaseOrderForm({
       })
       .catch(() => {});
 
+    fetch("/api/units")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!mounted) return;
+        if (data?.units && Array.isArray(data.units)) {
+          setUnitsList(getAllUnitsList([...getStoredCustomUnits(), ...data.units]));
+        }
+      })
+      .catch(() => {});
+
+    const handleCustomUnitsUpdated = () => {
+      if (mounted) {
+        setUnitsList(getAllUnitsList(getStoredCustomUnits()));
+      }
+    };
+    window.addEventListener("custom_units_updated", handleCustomUnitsUpdated);
+
     return () => {
       mounted = false;
+      window.removeEventListener("custom_units_updated", handleCustomUnitsUpdated);
     };
   }, []);
 
@@ -919,6 +1165,24 @@ export function PurchaseOrderForm({
                     <span>Record Payment</span>
                   </Link>
 
+                  {linkedBill ? (
+                    <Link
+                      href="/purchases/bills"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-emerald-700 shadow-2xs hover:bg-emerald-100 transition"
+                    >
+                      <FileText className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>View Bill ({linkedBill.billNumber})</span>
+                    </Link>
+                  ) : (
+                    <Link
+                      href={`/purchases/bills/new?purchaseOrderId=${encodeURIComponent(purchaseOrderId || poNumber)}`}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2 text-xs font-semibold text-blue-700 shadow-2xs hover:bg-blue-100 transition"
+                    >
+                      <Plus className="h-3.5 w-3.5 text-blue-600" />
+                      <span>+ New Bill</span>
+                    </Link>
+                  )}
+
                   <Link
                     href={`/purchases/purchase-orders/${purchaseOrderId}?mode=edit`}
                     className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 transition"
@@ -1352,7 +1616,7 @@ export function PurchaseOrderForm({
             )}
           </div>
 
-          <div className="overflow-x-auto">
+          <div className={`overflow-x-auto ${!isViewMode ? "min-h-[360px] pb-32" : ""}`}>
             <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
               <thead className="bg-slate-50/70 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                 <tr>
@@ -1438,7 +1702,7 @@ export function PurchaseOrderForm({
                           {row.quantity} <span className="text-slate-400 font-normal">{row.unit}</span>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1.5">
                           <input
                             type="number"
                             min="0.001"
@@ -1447,12 +1711,10 @@ export function PurchaseOrderForm({
                             onChange={(e) => updateItemRow(idx, "quantity", parseFloat(e.target.value) || 0)}
                             className="w-20 rounded-xl border border-slate-200 px-2 py-1.5 text-right font-semibold text-slate-900 outline-none focus:border-blue-500"
                           />
-                          <input
-                            type="text"
-                            placeholder="Unit"
+                          <SearchableUnitDropdown
                             value={row.unit}
-                            onChange={(e) => updateItemRow(idx, "unit", e.target.value)}
-                            className="w-14 rounded-xl border border-slate-200 px-1.5 py-1.5 text-center text-[11px] text-slate-500 outline-none"
+                            onChange={(newUnit) => updateItemRow(idx, "unit", newUnit)}
+                            unitsList={unitsList}
                           />
                         </div>
                       )}
@@ -1863,6 +2125,72 @@ export function PurchaseOrderForm({
                         {log.notes && <p className="text-slate-500 mt-0.5">{log.notes}</p>}
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Purchase Bill Card in View Mode */}
+            {isViewMode && (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-3 text-xs">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <FileText className="h-4 w-4 text-blue-600" />
+                    <span>Purchase Bill</span>
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      linkedBill
+                        ? "bg-emerald-50 text-emerald-700"
+                        : "bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    {linkedBill ? "Billed" : "Not Billed"}
+                  </span>
+                </div>
+
+                {linkedBill ? (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-500">Bill Number:</span>
+                      <span className="font-semibold text-slate-900 font-mono">
+                        {linkedBill.billNumber}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-500">Bill Total:</span>
+                      <span className="font-semibold text-slate-900">
+                        ₹{Number(linkedBill.total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-500">Balance Due:</span>
+                      <span className="font-semibold text-amber-600">
+                        ₹{Number(linkedBill.balanceDue || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="pt-2">
+                      <Link
+                        href="/purchases/bills"
+                        className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
+                      >
+                        <FileText className="h-3.5 w-3.5 text-slate-500" />
+                        <span>View Purchase Bill</span>
+                      </Link>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-[11px] text-slate-500">
+                      No bill has been generated for this purchase order yet. You can create a bill manually when supplier invoices are received.
+                    </p>
+                    <Link
+                      href={`/purchases/bills/new?purchaseOrderId=${encodeURIComponent(purchaseOrderId || poNumber)}`}
+                      className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 transition"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>+ New Bill</span>
+                    </Link>
                   </div>
                 )}
               </div>

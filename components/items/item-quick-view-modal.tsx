@@ -1,14 +1,20 @@
 "use client";
 
-import { X } from "lucide-react";
-import { formatCurrency, type ItemRecord } from "./item-types";
+import { Pencil, X } from "lucide-react";
+import { formatCurrency, getMarginColorClass, type ItemRecord } from "./item-types";
 
 type ItemQuickViewModalProps = {
   item: ItemRecord;
   onClose: () => void;
+  onEdit?: (item: ItemRecord) => void;
 };
 
-export function ItemQuickViewModal({ item, onClose }: ItemQuickViewModalProps) {
+export function ItemQuickViewModal({ item, onClose, onEdit }: ItemQuickViewModalProps) {
+  const sPrice = item.salesPrice || 0;
+  const cPrice = item.purchasePrice || 0;
+  const marginPercent =
+    sPrice > 0 && cPrice > 0 ? Math.round(((sPrice - cPrice) / sPrice) * 100) : null;
+
   return (
     <div
       role="dialog"
@@ -38,6 +44,14 @@ export function ItemQuickViewModal({ item, onClose }: ItemQuickViewModalProps) {
                 <span className="text-xs font-mono text-slate-500">{item.sku || "NO SKU"}</span>
                 <span>·</span>
                 <span className="text-xs font-semibold uppercase text-slate-600">{item.unit}</span>
+                {(item.commodityCategory || item.category) && (
+                  <>
+                    <span>·</span>
+                    <span className="text-xs text-blue-600 font-medium">
+                      {item.commodityCategory || item.category}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -63,6 +77,11 @@ export function ItemQuickViewModal({ item, onClose }: ItemQuickViewModalProps) {
             <div>
               <span className="text-xs text-slate-500 block">Cost Price</span>
               <span className="text-lg font-bold text-slate-700">{formatCurrency(item.purchasePrice)}</span>
+              {marginPercent !== null && (
+                <span className={`text-[11px] font-semibold block mt-0.5 ${getMarginColorClass(marginPercent)}`}>
+                  {marginPercent}% margin
+                </span>
+              )}
               <span className="text-[11px] text-slate-400 block mt-0.5">
                 Account: {item.purchaseAccount || "COGS"}
               </span>
@@ -107,13 +126,28 @@ export function ItemQuickViewModal({ item, onClose }: ItemQuickViewModalProps) {
         {/* Footer */}
         <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
           <span className="text-xs text-slate-400">ID: {item.id}</span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
-          >
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            {onEdit && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onEdit(item);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+                Edit Item
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>

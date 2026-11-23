@@ -470,6 +470,26 @@ export async function POST(request: Request) {
       existingBillCandidate = existing as unknown as PurchaseBillRecord & { _id: Types.ObjectId };
     }
 
+    // Prevent duplicate bills for the same Purchase Order
+    const trimmedOrderNumber = (orderNumber || "").trim();
+    if (trimmedOrderNumber) {
+      const existingBillForPO = await PurchaseBill.findOne({
+        $or: [{ organizationId: orgObjId }, { organizationId: String(orgObjId) }],
+        orderNumber: { $regex: new RegExp(`^${escapeRegex(trimmedOrderNumber)}$`, "i") },
+      }).lean();
+      if (existingBillForPO) {
+        const isSameCandidate =
+          existingBillCandidate &&
+          String(existingBillCandidate._id) === String((existingBillForPO as unknown as { _id?: unknown })._id);
+        if (!isSameCandidate) {
+          return respondError(
+            `A bill (${existingBillForPO.billNumber}) has already been generated for Purchase Order ${trimmedOrderNumber}.`,
+            409,
+          );
+        }
+      }
+    }
+
     // Calculate due date
     const finalBillDate = billDate ? new Date(billDate) : new Date();
     let finalDueDate: Date;
