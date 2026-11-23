@@ -1099,6 +1099,58 @@ export function PurchaseOrderForm({
     }
   };
 
+  const handleCreateDeliveryChallan = () => {
+    const poRef = purchaseOrderId || poNumber;
+    if (!poRef) return;
+
+    // Collect received items from inwardQuantities or items list
+    const receivedItemsList = items
+      .map((it) => {
+        const qty = inwardQuantities[it.name] !== undefined
+          ? Number(inwardQuantities[it.name])
+          : Math.max(0, it.quantity - (it.receivedQuantity || 0));
+        return {
+          name: it.name,
+          description: it.description || "",
+          sku: it.sku || "",
+          unit: it.unit || "pcs",
+          quantity: qty > 0 ? qty : 0,
+          rate: it.rate || 0,
+          amount: Math.round((qty > 0 ? qty : 0) * (it.rate || 0) * 100) / 100,
+        };
+      })
+      .filter((it) => it.quantity > 0);
+
+    const finalItems = receivedItemsList.length > 0 ? receivedItemsList : items.map((it) => ({
+      name: it.name,
+      description: it.description || "",
+      sku: it.sku || "",
+      unit: it.unit || "pcs",
+      quantity: it.quantity || 1,
+      rate: it.rate || 0,
+      amount: it.amount || 0,
+    }));
+
+    const prefillPayload = {
+      purchaseOrderId: poRef,
+      poNumber: poNumber,
+      vendorId: selectedVendor?.id || "",
+      vendorName: selectedVendorName || selectedVendor?.displayName || "",
+      items: finalItems,
+    };
+
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        window.sessionStorage.setItem("traders_dc_prefill_po", JSON.stringify(prefillPayload));
+      }
+    } catch {
+      // Ignore storage errors
+    }
+
+    setShowReceiveModal(false);
+    router.push(`/sales/delivery-challans/new?purchaseOrderId=${encodeURIComponent(poRef)}`);
+  };
+
   return (
     <div className="min-h-screen pb-28 text-slate-900 animate-in fade-in duration-200">
       {/* Top Header & Breadcrumbs */}
@@ -2453,27 +2505,37 @@ export function PurchaseOrderForm({
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => setShowReceiveModal(false)}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                onClick={handleCreateDeliveryChallan}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-blue-600 bg-white px-3.5 py-2 text-xs font-semibold text-blue-600 shadow-2xs hover:bg-blue-50 transition cursor-pointer"
               >
-                Cancel
+                <Truck className="h-3.5 w-3.5" />
+                <span>Create Delivery Challan</span>
               </button>
-              <button
-                type="button"
-                disabled={submittingInward}
-                onClick={handleConfirmInwardReceipt}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition disabled:opacity-50"
-              >
-                {submittingInward ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <PackageCheck className="h-3.5 w-3.5" />
-                )}
-                <span>Record Inward Goods</span>
-              </button>
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setShowReceiveModal(false)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={submittingInward}
+                  onClick={handleConfirmInwardReceipt}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition disabled:opacity-50 cursor-pointer"
+                >
+                  {submittingInward ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <PackageCheck className="h-3.5 w-3.5" />
+                  )}
+                  <span>Record Inward Goods</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

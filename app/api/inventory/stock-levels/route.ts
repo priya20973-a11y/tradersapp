@@ -49,11 +49,29 @@ export async function GET(request: Request) {
       .sort({ updatedAt: -1 })
       .lean();
 
-    // Load location names map
-    const [warehouses, shops] = await Promise.all([
+    // Load location names map and lookup any unpopulated commodities from Item master
+    const unpopulatedIds = stockLevels
+      .filter((lvl) => !lvl.commodityId || typeof (lvl.commodityId as unknown as { name?: string })?.name !== "string")
+      .map((lvl) => lvl.commodityId)
+      .filter((id) => id && isValidObjectId(id));
+
+    const [warehouses, shops, extraItems] = await Promise.all([
       Warehouse.find({ organizationId: orgObjId }).select("_id name code").lean(),
       StockLocation.find({ organizationId: orgObjId }).select("_id name code locationType").lean(),
+      unpopulatedIds.length > 0
+        ? Item.find({ _id: { $in: unpopulatedIds } }).select("_id name sku unit").lean()
+        : Promise.resolve([]),
     ]);
+
+    const itemMasterMap = new Map<string, { name: string; sku?: string; unit?: string }>();
+    for (const rawIt of extraItems) {
+      const it = rawIt as unknown as { _id?: unknown; name?: string; sku?: string; unit?: string };
+      itemMasterMap.set(String(it._id), {
+        name: String(it.name || "Commodity"),
+        sku: it.sku ? String(it.sku) : undefined,
+        unit: it.unit ? String(it.unit) : undefined,
+      });
+    }
 
     const locationNameMap: Record<string, { name: string; code: string; type: string }> = {};
     for (const w of warehouses) {
@@ -65,6 +83,7 @@ export async function GET(request: Request) {
 
     let results = stockLevels.map((lvl) => {
       const comm = lvl.commodityId as unknown as { _id?: unknown; name?: string; sku?: string; unit?: string; purchasePrice?: number; salesPrice?: number } | null;
+      const unpop = itemMasterMap.get(String(lvl.commodityId));
       const locInfo = locationNameMap[String(lvl.locationId)] || {
         name: `${lvl.locationType} #${String(lvl.locationId).slice(-4)}`,
         code: String(lvl.locationId).slice(-4),
@@ -78,6 +97,10 @@ export async function GET(request: Request) {
       const avgCost = Number(lvl.averageCost || comm?.purchasePrice || 0);
       const stockValue = Number(lvl.stockValue || Math.round(onHand * avgCost * 100) / 100);
 
+      const commodityName = comm?.name || unpop?.name || "Commodity";
+      const commoditySku = comm?.sku || unpop?.sku || "";
+      const unit = comm?.unit || unpop?.unit || lvl.unit || "unit";
+
       return {
         id: String(lvl._id),
         locationType: lvl.locationType,
@@ -85,9 +108,9 @@ export async function GET(request: Request) {
         locationName: locInfo.name,
         locationCode: locInfo.code,
         commodityId: comm?._id ? String(comm._id) : String(lvl.commodityId),
-        commodityName: comm?.name || "Commodity",
-        commoditySku: comm?.sku || "",
-        unit: lvl.unit || comm?.unit || "unit",
+        commodityName,
+        commoditySku,
+        unit,
         onHandStock: onHand,
         reservedStock: reserved,
         availableStock: available,
@@ -103,6 +126,7 @@ export async function GET(request: Request) {
         (r) =>
           r.commodityName.toLowerCase().includes(search) ||
           r.commoditySku.toLowerCase().includes(search) ||
+          r.unit.toLowerCase().includes(search) ||
           r.locationName.toLowerCase().includes(search),
       );
     }

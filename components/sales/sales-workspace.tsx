@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import {
   type SalesData,
   type SalesDocument,
@@ -12,6 +13,7 @@ import { SalesWorkspaceTable } from "./workspace/sales-workspace-table";
 import { fetchCachedSales, invalidateSalesCache } from "@/lib/sales-cache";
 
 export function SalesWorkspace({ section }: { section: SalesSection }) {
+  const router = useRouter();
   const [data, setData] = useState<SalesData>({
     organizations: [],
     customers: [],
@@ -196,6 +198,10 @@ export function SalesWorkspace({ section }: { section: SalesSection }) {
   }
 
   async function runAction(document: SalesDocument, action: string) {
+    if (action === "invoice-from-order") {
+      router.push(`/sales/invoices/new?salesOrderId=${document.id}`);
+      return;
+    }
     await postAction({ action, documentId: document.id });
   }
 

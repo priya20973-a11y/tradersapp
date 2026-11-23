@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Calculator,
   CheckCircle2,
@@ -79,6 +79,9 @@ export function NewDeliveryChallanForm({
   onCancel,
 }: NewDeliveryChallanFormProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const poParam = searchParams?.get("purchaseOrderId") || searchParams?.get("poNumber");
+  const [hasAppliedPoPrefill, setHasAppliedPoPrefill] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Master Data
@@ -204,33 +207,66 @@ export function NewDeliveryChallanForm({
         if (!isMounted) return;
 
         if (salesData?.customers && salesData.customers.length > 0) {
-          setCustomers(salesData.customers);
+          setCustomers((prev) => {
+            const list: CustomerOption[] = [...(salesData.customers || [])];
+            for (const p of prev) {
+              if (!list.some((c) => c.id === p.id)) {
+                list.unshift(p);
+              }
+            }
+            return list;
+          });
         } else {
-          setCustomers([
-            { id: "c-101", name: "Astra Foods", email: "billing@astrafoods.in", phone: "+91 98200 11223" },
-            { id: "c-102", name: "City Retail & Groceries", email: "accounts@cityretail.in", phone: "+91 98400 44556" },
-            { id: "c-103", name: "Ganga Stores Pvt Ltd", email: "ap@gangastores.in", phone: "+91 98765 43210" },
-          ]);
+          setCustomers((prev) => {
+            const defaults: CustomerOption[] = [
+              { id: "c-101", name: "Astra Foods", email: "billing@astrafoods.in", phone: "+91 98200 11223" },
+              { id: "c-102", name: "City Retail & Groceries", email: "accounts@cityretail.in", phone: "+91 98400 44556" },
+              { id: "c-103", name: "Ganga Stores Pvt Ltd", email: "ap@gangastores.in", phone: "+91 98765 43210" },
+            ];
+            const list: CustomerOption[] = [...defaults];
+            for (const p of prev) {
+              if (!list.some((c) => c.id === p.id)) {
+                list.unshift(p);
+              }
+            }
+            return list;
+          });
         }
 
         if (itemsData?.items && itemsData.items.length > 0) {
-          setAvailableItems(
-            itemsData.items.map((i) => ({
-              id: i.id || (i._id ? String(i._id) : i.sku || ""),
-              name: i.name || "",
-              sku: i.sku,
-              salesPrice: i.salesPrice || 0,
-              salesDescription: i.salesDescription || "",
-              unit: i.unit || "pcs",
-            }))
-          );
+          const mapped: ItemOption[] = itemsData.items.map((i) => ({
+            id: i.id || (i._id ? String(i._id) : i.sku || ""),
+            name: i.name || "",
+            sku: i.sku,
+            salesPrice: i.salesPrice || 0,
+            salesDescription: i.salesDescription || "",
+            unit: i.unit || "pcs",
+          }));
+          setAvailableItems((prev) => {
+            const list: ItemOption[] = [...mapped];
+            for (const p of prev) {
+              if (!list.some((it) => it.id === p.id || it.name.toLowerCase() === p.name.toLowerCase())) {
+                list.unshift(p);
+              }
+            }
+            return list;
+          });
         } else {
-          setAvailableItems([
-            { id: "item-1", name: "Premium Basmati Rice 25kg", sku: "RICE-BAS-25", salesPrice: 2200, unit: "Bag" },
-            { id: "item-2", name: "Sharbati Wheat 10kg", sku: "WHEAT-SHAR-10", salesPrice: 1280, unit: "Bag" },
-            { id: "item-3", name: "Refined Mustard Oil 15L Tin", sku: "OIL-MUST-15", salesPrice: 2150, unit: "Tin" },
-            { id: "item-4", name: "Organic Toor Dal 5kg", sku: "PULSE-TOOR-5", salesPrice: 780, unit: "Pack" },
-          ]);
+          setAvailableItems((prev) => {
+            const defaults: ItemOption[] = [
+              { id: "item-1", name: "Premium Basmati Rice 25kg", sku: "RICE-BAS-25", salesPrice: 2200, unit: "Bag" },
+              { id: "item-2", name: "Sharbati Wheat 10kg", sku: "WHEAT-SHAR-10", salesPrice: 1280, unit: "Bag" },
+              { id: "item-3", name: "Refined Mustard Oil 15L Tin", sku: "OIL-MUST-15", salesPrice: 2150, unit: "Tin" },
+              { id: "item-4", name: "Organic Toor Dal 5kg", sku: "PULSE-TOOR-5", salesPrice: 780, unit: "Pack" },
+            ];
+            const list: ItemOption[] = [...defaults];
+            for (const p of prev) {
+              if (!list.some((it) => it.id === p.id || it.name.toLowerCase() === p.name.toLowerCase())) {
+                list.unshift(p);
+              }
+            }
+            return list;
+          });
         }
 
         if (prefData?.settings) {
@@ -245,6 +281,173 @@ export function NewDeliveryChallanForm({
       isMounted = false;
     };
   }, [isEditMode]);
+
+  // Prefill from Purchase Order (Record Inward Goods)
+  useEffect(() => {
+    if (isEditMode || initialData || hasAppliedPoPrefill) return;
+
+    interface PoPrefillData {
+      purchaseOrderId?: string;
+      poNumber?: string;
+      vendorId?: string;
+      vendorName?: string;
+      items?: Array<{
+        name: string;
+        description?: string;
+        sku?: string;
+        unit?: string;
+        quantity: number;
+        rate?: number;
+        amount?: number;
+      }>;
+    }
+
+    let prefillData: PoPrefillData | null = null;
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        const raw = window.sessionStorage.getItem("traders_dc_prefill_po");
+        if (raw) {
+          const parsed = JSON.parse(raw) as PoPrefillData;
+          if (
+            parsed &&
+            (!poParam ||
+              parsed.purchaseOrderId === poParam ||
+              parsed.poNumber === poParam)
+          ) {
+            prefillData = parsed;
+            window.sessionStorage.removeItem("traders_dc_prefill_po");
+          }
+        }
+      }
+    } catch {
+      // Ignore sessionStorage parsing errors
+    }
+
+    const applyPrefill = (data: PoPrefillData) => {
+      setHasAppliedPoPrefill(true);
+
+      if (data.poNumber || data.purchaseOrderId) {
+        setReferenceNumber(data.poNumber || data.purchaseOrderId || "");
+        setCustomerNotes(
+          (prev) =>
+            prev ||
+            `Inward delivery against Purchase Order #${data.poNumber || data.purchaseOrderId}`,
+        );
+      }
+
+      // Prefill Vendor / Customer
+      if (data.vendorName || data.vendorId) {
+        const vName = data.vendorName || "Vendor";
+        const vId = data.vendorId || `vendor-${Date.now()}`;
+        setCustomers((prev) => {
+          const exists = prev.find(
+            (c) =>
+              (data.vendorId && c.id === data.vendorId) ||
+              c.name.toLowerCase() === vName.toLowerCase() ||
+              c.companyName?.toLowerCase() === vName.toLowerCase(),
+          );
+          if (exists) {
+            setSelectedCustomerId(exists.id);
+            return prev;
+          }
+          const newOpt: CustomerOption = {
+            id: vId,
+            name: vName,
+            companyName: vName,
+          };
+          setSelectedCustomerId(newOpt.id);
+          return [newOpt, ...prev];
+        });
+      }
+
+      // Prefill Items
+      if (data.items && data.items.length > 0) {
+        const newRows: ChallanItemRow[] = data.items.map((it, idx) => {
+          const qty = Number(it.quantity) || 1;
+          const rate = Number(it.rate) || 0;
+          const amount = Number(it.amount) || Math.round(qty * rate * 100) / 100;
+          return {
+            id: `row-po-${idx}-${Date.now()}`,
+            itemId: "",
+            name: it.name,
+            description: it.description || "",
+            unit: it.unit || "pcs",
+            quantity: qty,
+            rate: rate,
+            amount: amount,
+          };
+        });
+
+        // Register items in availableItems so the dropdown selects them cleanly
+        setAvailableItems((prev) => {
+          const updated = [...prev];
+          newRows.forEach((r) => {
+            const matched = updated.find(
+              (a) => a.name.toLowerCase() === r.name.toLowerCase(),
+            );
+            if (matched) {
+              r.itemId = matched.id;
+            } else {
+              const newAvail: ItemOption = {
+                id: `po-item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                name: r.name,
+                unit: r.unit,
+                salesPrice: r.rate,
+              };
+              r.itemId = newAvail.id;
+              updated.push(newAvail);
+            }
+          });
+          return updated;
+        });
+
+        setRows(newRows);
+      }
+    };
+
+    if (prefillData) {
+      applyPrefill(prefillData);
+    } else if (poParam) {
+      let active = true;
+      fetch(`/api/purchases/purchase-orders/${encodeURIComponent(poParam)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((resData) => {
+          if (!active || !resData?.purchaseOrder) return;
+          const po = resData.purchaseOrder;
+          applyPrefill({
+            purchaseOrderId: po.id,
+            poNumber: po.purchaseOrderNumber,
+            vendorId: po.vendorId,
+            vendorName: po.vendorName,
+            items: (po.items || []).map(
+              (it: {
+                name: string;
+                description?: string;
+                sku?: string;
+                unit?: string;
+                quantity: number;
+                receivedQuantity?: number;
+                rate?: number;
+                amount?: number;
+              }) => ({
+                name: it.name,
+                description: it.description,
+                sku: it.sku,
+                unit: it.unit,
+                quantity: Math.max(1, it.quantity - (it.receivedQuantity || 0)),
+                rate: it.rate,
+                amount: it.amount,
+              }),
+            ),
+          });
+        })
+        .catch(() => {});
+
+      return () => {
+        active = false;
+      };
+    }
+  }, [poParam, isEditMode, initialData, hasAppliedPoPrefill]);
 
   // Derived selected customer
   const selectedCustomer = useMemo(

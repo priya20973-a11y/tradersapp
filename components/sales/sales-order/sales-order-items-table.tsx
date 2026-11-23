@@ -44,7 +44,7 @@ export function SalesOrderItemsTable({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-bold text-slate-900 tracking-tight">Order Line Items</h2>
-          <p className="text-xs text-slate-500">Configure commodities, stock lots, units, and rates.</p>
+          <p className="text-xs text-slate-500">Configure commodities, quantities, units, and rates.</p>
         </div>
 
         <div className="relative">

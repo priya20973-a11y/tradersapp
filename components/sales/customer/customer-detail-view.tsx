@@ -23,6 +23,7 @@ import {
   Receipt,
   Search,
   Send,
+  Trash2,
   TrendingUp,
   Upload,
   User,
@@ -68,6 +69,7 @@ type CustomerDetailViewProps = {
   onClose: () => void;
   onCustomerUpdated: (updated: Customer) => void;
   onNewCustomer: () => void;
+  onDeleteCustomer?: (customer: Customer) => void;
 };
 
 export function CustomerDetailView({
@@ -79,6 +81,7 @@ export function CustomerDetailView({
   onClose,
   onCustomerUpdated,
   onNewCustomer,
+  onDeleteCustomer,
 }: CustomerDetailViewProps) {
   const router = useRouter();
   const mounted = useSyncExternalStore(
@@ -892,6 +895,17 @@ export function CustomerDetailView({
                     >
                       <Printer className="h-4 w-4 text-slate-400" />
                       <span>Print Profile</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreOpen(false);
+                        onDeleteCustomer?.(selectedCustomer);
+                      }}
+                      className="flex w-full items-center gap-2 px-3.5 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                    >
+                      <Trash2 className="h-4 w-4 text-rose-500" />
+                      <span>Delete Client</span>
                     </button>
                   </div>
                 )}

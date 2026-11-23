@@ -18,6 +18,12 @@ import {
   Store,
   X,
 } from "lucide-react";
+import {
+  DEFAULT_SHOP_WRITE_OFF_REASONS,
+  getShopWriteOffReasons,
+  saveStoredShopWriteOffReason,
+} from "@/lib/shop-write-off-storage";
+import { formatCommodityNameWithUnit } from "@/lib/commodity-utils";
 
 interface ShopOption {
   id: string;
@@ -84,9 +90,25 @@ export function ShopDashboard() {
   const [showWriteOffModal, setShowWriteOffModal] = useState(false);
   const [writeOffCommodity, setWriteOffCommodity] = useState<StockLevelRow | null>(null);
   const [writeOffQty, setWriteOffQty] = useState("");
-  const [writeOffReason, setWriteOffReason] = useState("Damaged in retail display");
+  const [writeOffReason, setWriteOffReason] = useState(DEFAULT_SHOP_WRITE_OFF_REASONS[0]);
+  const [writeOffReasons, setWriteOffReasons] = useState<string[]>(DEFAULT_SHOP_WRITE_OFF_REASONS);
+  const [isAddingReason, setIsAddingReason] = useState(false);
+  const [newReasonInput, setNewReasonInput] = useState("");
+  const [reasonError, setReasonError] = useState("");
   const [writeOffRemarks, setWriteOffRemarks] = useState("");
   const [submittingWriteOff, setSubmittingWriteOff] = useState(false);
+
+  // Sync shop write-off reasons from storage
+  useEffect(() => {
+    const updateReasons = () => {
+      setWriteOffReasons(getShopWriteOffReasons());
+    };
+    updateReasons();
+    window.addEventListener("shop_write_off_reasons_updated", updateReasons);
+    return () => {
+      window.removeEventListener("shop_write_off_reasons_updated", updateReasons);
+    };
+  }, []);
 
   // Alerts
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -203,15 +225,59 @@ export function ShopDashboard() {
   };
 
   const handleOpenWriteOff = (item: StockLevelRow) => {
+    const currentReasons = getShopWriteOffReasons();
+    setWriteOffReasons(currentReasons);
     setWriteOffCommodity(item);
     setWriteOffQty("");
-    setWriteOffReason("Damaged in retail display");
+    setWriteOffReason(currentReasons[0] || "Damaged in retail display");
     setWriteOffRemarks("");
+    setIsAddingReason(false);
+    setNewReasonInput("");
+    setReasonError("");
     setShowWriteOffModal(true);
+  };
+
+  const handleSaveCustomReason = () => {
+    const trimmed = newReasonInput.trim();
+    if (!trimmed) {
+      setReasonError("Please enter a custom reason.");
+      return;
+    }
+    saveStoredShopWriteOffReason(trimmed);
+    const updated = getShopWriteOffReasons();
+    setWriteOffReasons(updated);
+    setWriteOffReason(trimmed);
+    setIsAddingReason(false);
+    setNewReasonInput("");
+    setReasonError("");
   };
 
   const handleConfirmWriteOff = async () => {
     if (!writeOffCommodity || !selectedShopId) return;
+
+    let effectiveReason = writeOffReason;
+    if (isAddingReason) {
+      const trimmed = newReasonInput.trim();
+      if (trimmed) {
+        saveStoredShopWriteOffReason(trimmed);
+        const updated = getShopWriteOffReasons();
+        setWriteOffReasons(updated);
+        setWriteOffReason(trimmed);
+        effectiveReason = trimmed;
+        setIsAddingReason(false);
+        setNewReasonInput("");
+        setReasonError("");
+      } else {
+        setMessage({ type: "error", text: "Please enter or select a write-off reason." });
+        return;
+      }
+    }
+
+    if (!effectiveReason || !effectiveReason.trim()) {
+      setMessage({ type: "error", text: "Please select a valid write-off reason." });
+      return;
+    }
+
     const qty = Number(writeOffQty);
     if (!qty || qty <= 0) {
       setMessage({ type: "error", text: "Please enter a valid write-off quantity." });
@@ -236,7 +302,7 @@ export function ShopDashboard() {
           locationId: selectedShopId,
           commodityId: writeOffCommodity.commodityId,
           quantity: qty,
-          reason: writeOffReason,
+          reason: effectiveReason,
           remarks: writeOffRemarks,
         }),
       });
@@ -261,7 +327,9 @@ export function ShopDashboard() {
     return stockLevels.filter(
       (s) =>
         s.commodityName.toLowerCase().includes(q) ||
-        (s.sku && s.sku.toLowerCase().includes(q))
+        (s.sku && s.sku.toLowerCase().includes(q)) ||
+        (s.unit && s.unit.toLowerCase().includes(q)) ||
+        formatCommodityNameWithUnit(s.commodityName, s.unit).toLowerCase().includes(q)
     );
   }, [stockLevels, searchQuery]);
 
@@ -472,7 +540,7 @@ export function ShopDashboard() {
                 filteredStocks.map((stock) => (
                   <tr key={stock.commodityId} className="hover:bg-slate-50/60 transition">
                     <td className="py-3.5 px-4 font-semibold text-slate-900">
-                      <div>{stock.commodityName}</div>
+                      <div>{formatCommodityNameWithUnit(stock.commodityName, stock.unit)}</div>
                       <div className="text-[11px] font-normal text-slate-400">
                         {stock.sku ? `SKU: ${stock.sku} • ` : ""}Unit: {stock.unit || "unit"}
                       </div>
@@ -616,7 +684,7 @@ export function ShopDashboard() {
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  Shop Stock Ledger {ledgerCommodity ? `— ${ledgerCommodity.commodityName}` : ""}
+                  Shop Stock Ledger {ledgerCommodity ? `— ${formatCommodityNameWithUnit(ledgerCommodity.commodityName, ledgerCommodity.unit)}` : ""}
                 </h3>
                 <p className="text-xs text-slate-500">
                   Shop Location: {selectedShop?.name}
@@ -767,7 +835,12 @@ export function ShopDashboard() {
               </div>
               <button
                 type="button"
-                onClick={() => setShowWriteOffModal(false)}
+                onClick={() => {
+                  setShowWriteOffModal(false);
+                  setIsAddingReason(false);
+                  setNewReasonInput("");
+                  setReasonError("");
+                }}
                 className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"
               >
                 <X className="w-5 h-5" />
@@ -776,7 +849,7 @@ export function ShopDashboard() {
 
             <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-1">
               <p>
-                Commodity: <strong className="text-slate-800">{writeOffCommodity.commodityName}</strong>
+                Commodity: <strong className="text-slate-800">{formatCommodityNameWithUnit(writeOffCommodity.commodityName, writeOffCommodity.unit)}</strong>
               </p>
               <p>
                 Shop: <strong className="text-slate-800">{selectedShop?.name}</strong>
@@ -805,18 +878,93 @@ export function ShopDashboard() {
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Reason</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-semibold text-slate-700">Reason</label>
+                  {!isAddingReason && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddingReason(true);
+                        setNewReasonInput("");
+                        setReasonError("");
+                      }}
+                      className="text-[11px] font-semibold text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" /> Add New Reason
+                    </button>
+                  )}
+                </div>
                 <select
-                  value={writeOffReason}
-                  onChange={(e) => setWriteOffReason(e.target.value)}
+                  value={isAddingReason ? "__ADD_NEW__" : writeOffReason}
+                  onChange={(e) => {
+                    if (e.target.value === "__ADD_NEW__") {
+                      setIsAddingReason(true);
+                      setNewReasonInput("");
+                      setReasonError("");
+                    } else {
+                      setIsAddingReason(false);
+                      setWriteOffReason(e.target.value);
+                      setReasonError("");
+                    }
+                  }}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm outline-none focus:border-rose-500 bg-white"
                 >
-                  <option value="Damaged in retail display">Damaged in retail display</option>
-                  <option value="Customer trial breakage">Customer trial breakage</option>
-                  <option value="Handling damage">Handling damage</option>
-                  <option value="Perished / Expired">Perished / Expired</option>
-                  <option value="Packaging seal compromised">Packaging seal compromised</option>
+                  {writeOffReasons.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                  <option value="__ADD_NEW__">+ Add New Reason...</option>
                 </select>
+
+                {isAddingReason && (
+                  <div className="mt-2 space-y-1.5 p-2.5 bg-slate-50 border border-slate-200 rounded-xl animate-in fade-in">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="Enter custom reason..."
+                        value={newReasonInput}
+                        onChange={(e) => {
+                          setNewReasonInput(e.target.value);
+                          if (reasonError) setReasonError("");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleSaveCustomReason();
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setIsAddingReason(false);
+                            setReasonError("");
+                          }
+                        }}
+                        className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-xs outline-none focus:border-rose-500 bg-white"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveCustomReason}
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold transition cursor-pointer"
+                      >
+                        Save Reason
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingReason(false);
+                          setNewReasonInput("");
+                          setReasonError("");
+                        }}
+                        className="px-2.5 py-1.5 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg text-xs font-semibold transition cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    {reasonError && (
+                      <p className="text-[11px] text-rose-600 font-medium">{reasonError}</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -834,7 +982,12 @@ export function ShopDashboard() {
             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => setShowWriteOffModal(false)}
+                onClick={() => {
+                  setShowWriteOffModal(false);
+                  setIsAddingReason(false);
+                  setNewReasonInput("");
+                  setReasonError("");
+                }}
                 className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl text-xs font-semibold"
               >
                 Cancel

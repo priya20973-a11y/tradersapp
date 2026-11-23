@@ -43,6 +43,13 @@ async function getSales(request: Request) {
         requestedOrganizationId = String(cust.organizationId);
       }
     }
+    const idParam = new URL(request.url).searchParams.get("id");
+    if (!requestedOrganizationId && idParam && isValidObjectId(idParam)) {
+      const doc = await SalesDocument.findById(idParam).select("organizationId").lean().catch(() => null);
+      if (doc?.organizationId) {
+        requestedOrganizationId = String(doc.organizationId);
+      }
+    }
   }
 
   if (session.user.id === "admin" && !requestedOrganizationId) {
@@ -71,11 +78,18 @@ async function getSales(request: Request) {
   if ("error" in scope) return scope.error;
 
   const url = new URL(request.url);
+  const docId = url.searchParams.get("id");
   const section = url.searchParams.get("section")?.toLowerCase();
   const documentTypeFilter = url.searchParams.get("type");
 
   const docQuery: Record<string, unknown> = { organizationId: scope.organizationId };
-  if (documentTypeFilter) {
+  if (docId) {
+    if (isValidObjectId(docId)) {
+      docQuery._id = new Types.ObjectId(docId);
+    } else {
+      docQuery._id = docId;
+    }
+  } else if (documentTypeFilter) {
     docQuery.type = documentTypeFilter;
   } else if (section === "quotes") {
     docQuery.type = "Quote";
@@ -113,6 +127,57 @@ async function getSales(request: Request) {
 
   const customers = customersRaw;
 
+  const mappedDocuments = documents.map((document) => {
+    const docRec = document as unknown as Record<string, unknown>;
+    return {
+      id: String(document._id),
+      type: document.type,
+      number: document.number,
+      customerId: String(document.customerId),
+      relatedDocumentId: document.relatedDocumentId ? String(document.relatedDocumentId) : "",
+      status: document.status,
+      total: Number(document.total ?? 0),
+      amountPaid: Number(document.amountPaid ?? 0),
+      creditedAmount: Number(document.creditedAmount ?? 0),
+      issueDate: document.issueDate?.toISOString() ?? "",
+      dueDate: document.dueDate?.toISOString() ?? "",
+      nextRunDate: document.nextRunDate?.toISOString() ?? "",
+      frequency: document.frequency ?? "",
+      method: document.method ?? "",
+      referenceNumber: document.referenceNumber ?? "",
+      notes: document.notes ?? "",
+      expiryDate: document.expiryDate?.toISOString() ?? "",
+      expectedShipmentDate: document.expectedShipmentDate?.toISOString() ?? "",
+      paymentTerms: document.paymentTerms ?? "",
+      deliveryMethod: document.deliveryMethod ?? "",
+      salesperson: document.salesperson ?? "",
+      projectName: document.projectName ?? "",
+      subject: document.subject ?? "",
+      customerNotes: document.customerNotes ?? "",
+      termsAndConditions: document.termsAndConditions ?? "",
+      subTotal: document.subTotal ?? 0,
+      discount: document.discount ?? 0,
+      discountType: document.discountType ?? "percent",
+      taxType: document.taxType ?? (document.type === "Quote" ? "GST" : "TDS"),
+      taxName: document.taxName ?? "",
+      taxRate: document.taxRate ?? 0,
+      taxAmount: document.taxAmount ?? 0,
+      tdsTcsType: (docRec.tdsTcsType as string) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxType : "None"),
+      tdsTcsName: (docRec.tdsTcsName as string) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxName : ""),
+      tdsTcsRate: (docRec.tdsTcsRate as number) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxRate : 0),
+      tdsTcsAmount: (docRec.tdsTcsAmount as number) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxAmount : 0),
+      adjustment: document.adjustment ?? 0,
+      items: document.items ?? [],
+      stockLocationType: (docRec.stockLocationType as "Warehouse" | "Shop") || undefined,
+      stockLocationId: docRec.stockLocationId ? String(docRec.stockLocationId) : undefined,
+      stockLocationName: (docRec.stockLocationName as string) || "",
+      createdAt: document.createdAt ? new Date(String(document.createdAt)).toISOString() : "",
+      paymentDate: docRec.paymentDate ? new Date(String(docRec.paymentDate)).toISOString() : "",
+    };
+  });
+
+  const singleDoc = docId ? (mappedDocuments.find((d) => d.id === docId) || mappedDocuments[0] || null) : null;
+
   return NextResponse.json({
     organizations: (scope.isAdmin ? allOrganizations : [organization]).map((item) => ({
       id: String(item._id),
@@ -149,54 +214,8 @@ async function getSales(request: Request) {
         updatedAt: customer.updatedAt ? new Date(String(customer.updatedAt)).toISOString() : "",
       };
     }),
-    documents: documents.map((document) => {
-      const docRec = document as unknown as Record<string, unknown>;
-      return {
-        id: String(document._id),
-        type: document.type,
-        number: document.number,
-        customerId: String(document.customerId),
-        relatedDocumentId: document.relatedDocumentId ? String(document.relatedDocumentId) : "",
-        status: document.status,
-        total: Number(document.total ?? 0),
-        amountPaid: Number(document.amountPaid ?? 0),
-        creditedAmount: Number(document.creditedAmount ?? 0),
-        issueDate: document.issueDate?.toISOString() ?? "",
-        dueDate: document.dueDate?.toISOString() ?? "",
-        nextRunDate: document.nextRunDate?.toISOString() ?? "",
-        frequency: document.frequency ?? "",
-        method: document.method ?? "",
-        referenceNumber: document.referenceNumber ?? "",
-        notes: document.notes ?? "",
-        expiryDate: document.expiryDate?.toISOString() ?? "",
-        expectedShipmentDate: document.expectedShipmentDate?.toISOString() ?? "",
-        paymentTerms: document.paymentTerms ?? "",
-        deliveryMethod: document.deliveryMethod ?? "",
-        salesperson: document.salesperson ?? "",
-        projectName: document.projectName ?? "",
-        subject: document.subject ?? "",
-        customerNotes: document.customerNotes ?? "",
-        termsAndConditions: document.termsAndConditions ?? "",
-        subTotal: document.subTotal ?? 0,
-        discount: document.discount ?? 0,
-        discountType: document.discountType ?? "percent",
-        taxType: document.taxType ?? (document.type === "Quote" ? "GST" : "TDS"),
-        taxName: document.taxName ?? "",
-        taxRate: document.taxRate ?? 0,
-        taxAmount: document.taxAmount ?? 0,
-        tdsTcsType: (docRec.tdsTcsType as string) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxType : "None"),
-        tdsTcsName: (docRec.tdsTcsName as string) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxName : ""),
-        tdsTcsRate: (docRec.tdsTcsRate as number) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxRate : 0),
-        tdsTcsAmount: (docRec.tdsTcsAmount as number) ?? ((document.taxType === "TDS" || document.taxType === "TCS") ? document.taxAmount : 0),
-        adjustment: document.adjustment ?? 0,
-        items: document.items ?? [],
-        stockLocationType: (docRec.stockLocationType as "Warehouse" | "Shop") || undefined,
-        stockLocationId: docRec.stockLocationId ? String(docRec.stockLocationId) : undefined,
-        stockLocationName: (docRec.stockLocationName as string) || "",
-        createdAt: document.createdAt ? new Date(String(document.createdAt)).toISOString() : "",
-        paymentDate: docRec.paymentDate ? new Date(String(docRec.paymentDate)).toISOString() : "",
-      };
-    }),
+    documents: mappedDocuments,
+    document: singleDoc,
     isAdmin: scope.isAdmin,
   });
 }

@@ -22,7 +22,7 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 
 ## Trading module
 
-The vertical Sales menu includes trader profiles, warehouses, and stock lots. Organization users are scoped to their own organization; the admin selects an organization before managing its trading data.
+The vertical Sales menu includes customers, accounts, payments, quotes, orders, invoices, delivery challans, and credit notes. Organization users are scoped to their own organization; the admin selects an organization before managing its trading data.
 
 Sales customers have a searchable directory and a dedicated creation page with customer type, contact details, tax identifiers, opening balance, payment terms, addresses, reporting tags, and remarks. Customer portal access and document uploads are not configured.
 

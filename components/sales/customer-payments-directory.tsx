@@ -13,10 +13,12 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Trash2,
   Wallet,
   X,
 } from "lucide-react";
 import { generatePaymentsCsv } from "@/lib/ledger-utils";
+import { invalidateSalesCache } from "@/lib/sales-cache";
 
 interface PaymentItem {
   id: string;
@@ -97,6 +99,8 @@ export function CustomerPaymentsDirectory() {
     return false;
   });
   const [selectedPayment, setSelectedPayment] = useState<PaymentItem | null>(null);
+  const [paymentToDelete, setPaymentToDelete] = useState<PaymentItem | null>(null);
+  const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
 
   // Form State
   const [formCustomerId, setFormCustomerId] = useState(() => {
@@ -335,6 +339,45 @@ export function CustomerPaymentsDirectory() {
     setRefreshing(true);
     setRefreshIndex((prev) => prev + 1);
   }, []);
+
+  const handleDeletePayment = (payment: PaymentItem) => {
+    setPaymentToDelete(payment);
+  };
+
+  const confirmDeletePayment = async () => {
+    if (!paymentToDelete) return;
+    const payment = paymentToDelete;
+    setDeletingPaymentId(payment.id);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const response = await fetch(`/api/sales/payments/${encodeURIComponent(payment.id)}`, {
+        method: "DELETE",
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete payment.");
+      }
+
+      setPaymentToDelete(null);
+      if (selectedPayment?.id === payment.id) {
+        setSelectedPayment(null);
+      }
+
+      setNotice(
+        `Payment receipt ${payment.number} deleted successfully. Outstanding balances and customer ledger updated.`
+      );
+      invalidateSalesCache();
+      handleRefresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to delete payment.";
+      setError(message);
+    } finally {
+      setDeletingPaymentId(null);
+    }
+  };
 
   // When customer changes in form, reset or auto-fill orders / invoices
   const customerOrders = useMemo(() => {
@@ -715,14 +758,29 @@ export function CustomerPaymentsDirectory() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedPayment(p)}
-                        className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
-                        title="View Details"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPayment(p)}
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
+                          title="View Details"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePayment(p)}
+                          disabled={deletingPaymentId === p.id}
+                          className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700 transition cursor-pointer disabled:opacity-50"
+                          title="Delete Payment"
+                        >
+                          {deletingPaymentId === p.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin text-rose-600" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1006,13 +1064,91 @@ export function CustomerPaymentsDirectory() {
               </div>
             </div>
 
-            <div className="mt-6 flex justify-end">
+            <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={() => handleDeletePayment(selectedPayment)}
+                disabled={Boolean(deletingPaymentId)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 hover:border-rose-300 transition cursor-pointer disabled:opacity-50"
+              >
+                {deletingPaymentId === selectedPayment.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" />
+                )}
+                <span>Delete Payment</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setSelectedPayment(null)}
                 className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-slate-800 transition cursor-pointer"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Popup */}
+      {paymentToDelete && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs animate-in fade-in duration-150"
+        >
+          <div className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600 border border-rose-100">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-bold text-slate-900">Delete Customer Payment</h3>
+                <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
+                  Are you sure you want to permanently delete payment receipt{" "}
+                  <strong className="text-slate-900 font-semibold">{paymentToDelete.number}</strong> for{" "}
+                  <strong className="text-slate-900 font-semibold">{formatINR(paymentToDelete.amount)}</strong> from{" "}
+                  <strong className="text-slate-900 font-semibold">{paymentToDelete.customerName}</strong>?
+                </p>
+                <div className="mt-3 rounded-xl bg-amber-50 p-3 border border-amber-200 text-[11px] text-amber-800 space-y-1">
+                  <p className="font-semibold">⚠️ This action will:</p>
+                  <ul className="list-disc pl-4 space-y-0.5 text-amber-700">
+                    <li>Permanently delete this payment receipt record.</li>
+                    <li>Restore the outstanding balance on linked invoice ({paymentToDelete.invoiceNumber || "On Account"}).</li>
+                    <li>Update the invoice status (e.g. from Paid back to Partly paid or Sent).</li>
+                    <li>Recompute and update the related customer ledger.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={() => setPaymentToDelete(null)}
+                disabled={Boolean(deletingPaymentId)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeletePayment}
+                disabled={Boolean(deletingPaymentId)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 transition cursor-pointer disabled:opacity-50"
+              >
+                {deletingPaymentId ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Deleting…</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Confirm Delete</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

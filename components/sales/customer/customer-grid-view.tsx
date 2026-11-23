@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, Eye, Mail, Phone } from "lucide-react";
+import { Building2, Eye, Mail, Phone, Trash2 } from "lucide-react";
 import {
   calculateCustomerReceivable,
   currency,
@@ -16,6 +16,7 @@ type CustomerGridViewProps = {
   selected: string[];
   onToggleCustomer: (id: string) => void;
   onQuickView: (customer: Customer) => void;
+  onDeleteCustomer?: (customer: Customer) => void;
 };
 
 export function CustomerGridView({
@@ -24,6 +25,7 @@ export function CustomerGridView({
   selected,
   onToggleCustomer,
   onQuickView,
+  onDeleteCustomer,
 }: CustomerGridViewProps) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -142,14 +144,25 @@ export function CustomerGridView({
               >
                 {isCardSelected ? "✓ Selected" : "+ Select"}
               </button>
-              <button
-                type="button"
-                onClick={() => onQuickView(customer)}
-                className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100"
-              >
-                <Eye className="h-3.5 w-3.5" />
-                <span>Quick View</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onDeleteCustomer?.(customer)}
+                  title="Delete client"
+                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-600 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Delete</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onQuickView(customer)}
+                  className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  <span>Quick View</span>
+                </button>
+              </div>
             </div>
           </div>
         );

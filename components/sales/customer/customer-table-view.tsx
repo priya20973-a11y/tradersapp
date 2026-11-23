@@ -1,11 +1,9 @@
 "use client";
 
-import { Eye, Mail, Phone } from "lucide-react";
+import { Eye, Mail, Phone, Trash2 } from "lucide-react";
 import {
   calculateCustomerReceivable,
   currency,
-  getAvatarColor,
-  getInitials,
   type Customer,
   type SalesDocument,
 } from "./customer-types";
@@ -18,6 +16,7 @@ type CustomerTableViewProps = {
   onToggleCustomer: (id: string) => void;
   onSelectAll: (checked: boolean) => void;
   onQuickView: (customer: Customer) => void;
+  onDeleteCustomer?: (customer: Customer) => void;
 };
 
 export function CustomerTableView({
@@ -28,6 +27,7 @@ export function CustomerTableView({
   onToggleCustomer,
   onSelectAll,
   onQuickView,
+  onDeleteCustomer,
 }: CustomerTableViewProps) {
   const isAllSelected = customers.length > 0 && selected.length === customers.length;
 
@@ -75,33 +75,24 @@ export function CustomerTableView({
                   </td>
 
                   <td className="px-4 py-3.5">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold shadow-xs ${getAvatarColor(
-                          customer.name
-                        )}`}
+                    <div className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => onQuickView(customer)}
+                        className="block truncate text-left text-sm font-semibold text-slate-900 hover:text-blue-600 hover:underline"
                       >
-                        {getInitials(customer.name)}
-                      </div>
-                      <div className="min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => onQuickView(customer)}
-                          className="truncate text-left font-semibold text-slate-900 hover:text-blue-600 hover:underline"
+                        {customer.name}
+                      </button>
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <span
+                          className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
+                            customer.customerType === "Business"
+                              ? "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20"
+                              : "bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-600/20"
+                          }`}
                         >
-                          {customer.name}
-                        </button>
-                        <div className="mt-0.5 flex items-center gap-1.5">
-                          <span
-                            className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
-                              customer.customerType === "Business"
-                                ? "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20"
-                                : "bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-600/20"
-                            }`}
-                          >
-                            {customer.customerType || "Business"}
-                          </span>
-                        </div>
+                          {customer.customerType || "Business"}
+                        </span>
                       </div>
                     </div>
                   </td>
@@ -175,15 +166,26 @@ export function CustomerTableView({
                   </td>
 
                   <td className="px-4 py-3.5 text-center">
-                    <button
-                      type="button"
-                      onClick={() => onQuickView(customer)}
-                      title="Quick view customer profile"
-                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-blue-600"
-                    >
-                      <Eye className="h-3.5 w-3.5" />
-                      <span>View</span>
-                    </button>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onQuickView(customer)}
+                        title="Quick view customer profile"
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-blue-600"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        <span>View</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteCustomer?.(customer)}
+                        title="Delete client"
+                        className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-rose-600 shadow-2xs transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span>Delete</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

@@ -23,6 +23,7 @@ import {
   TrendingDown,
   X,
 } from "lucide-react";
+import { formatCommodityNameWithUnit } from "@/lib/commodity-utils";
 
 interface WarehouseOption {
   id: string;
@@ -245,7 +246,9 @@ export function WarehouseDashboard() {
     return stockLevels.filter(
       (s) =>
         s.commodityName.toLowerCase().includes(q) ||
-        (s.sku && s.sku.toLowerCase().includes(q))
+        (s.sku && s.sku.toLowerCase().includes(q)) ||
+        (s.unit && s.unit.toLowerCase().includes(q)) ||
+        formatCommodityNameWithUnit(s.commodityName, s.unit).toLowerCase().includes(q)
     );
   }, [stockLevels, searchQuery]);
 
@@ -441,7 +444,7 @@ export function WarehouseDashboard() {
                 filteredStocks.map((stock) => (
                   <tr key={stock.commodityId} className="hover:bg-slate-50/60 transition">
                     <td className="py-3.5 px-4 font-semibold text-slate-900">
-                      <div>{stock.commodityName}</div>
+                      <div>{formatCommodityNameWithUnit(stock.commodityName, stock.unit)}</div>
                       <div className="text-[11px] font-normal text-slate-400">
                         {stock.sku ? `SKU: ${stock.sku} • ` : ""}Unit: {stock.unit || "unit"}
                       </div>
@@ -518,7 +521,7 @@ export function WarehouseDashboard() {
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  Warehouse Stock Ledger {ledgerCommodity ? `— ${ledgerCommodity.commodityName}` : ""}
+                  Warehouse Stock Ledger {ledgerCommodity ? `— ${formatCommodityNameWithUnit(ledgerCommodity.commodityName, ledgerCommodity.unit)}` : ""}
                 </h3>
                 <p className="text-xs text-slate-500">
                   Location: {selectedWarehouse?.name}
@@ -723,7 +726,7 @@ export function WarehouseDashboard() {
 
             <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-1">
               <p>
-                Commodity: <strong className="text-slate-800">{writeOffCommodity.commodityName}</strong>
+                Commodity: <strong className="text-slate-800">{formatCommodityNameWithUnit(writeOffCommodity.commodityName, writeOffCommodity.unit)}</strong>
               </p>
               <p>
                 Location: <strong className="text-slate-800">{selectedWarehouse?.name}</strong>

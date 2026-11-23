@@ -149,6 +149,38 @@ export function CustomerDirectory({ initialCustomerId }: { initialCustomerId?: s
     }
   };
 
+  const handleDeleteCustomer = async (customer: Customer) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete client "${customer.name}"? This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const queryParam = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : "";
+      const response = await fetch(
+        `/api/sales/customers/${encodeURIComponent(customer.id)}${queryParam}`,
+        {
+          method: "DELETE",
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || data.message || "Failed to delete client.");
+      }
+
+      if (selectedCustomer?.id === customer.id) {
+        handleCloseDetail();
+      }
+
+      invalidateSalesCache();
+      await loadOrganization(organizationId, true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to delete client.";
+      setError(message);
+      alert(message);
+    }
+  };
+
   const handleRefresh = () => {
     setIsRefreshing(true);
     invalidateSalesCache();
@@ -218,6 +250,7 @@ export function CustomerDirectory({ initialCustomerId }: { initialCustomerId?: s
         organizationId={organizationId}
         onSelectCustomer={handleSelectCustomer}
         onClose={handleCloseDetail}
+        onDeleteCustomer={handleDeleteCustomer}
         onCustomerUpdated={(updated) => {
           setSelectedCustomer(updated);
           setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
@@ -514,6 +547,7 @@ export function CustomerDirectory({ initialCustomerId }: { initialCustomerId?: s
               setSelected(checked ? visibleCustomers.map((c) => c.id) : [])
             }
             onQuickView={(customer) => handleSelectCustomer(customer)}
+            onDeleteCustomer={handleDeleteCustomer}
           />
         ) : (
           <CustomerGridView
@@ -522,6 +556,7 @@ export function CustomerDirectory({ initialCustomerId }: { initialCustomerId?: s
             selected={selected}
             onToggleCustomer={toggleCustomer}
             onQuickView={(customer) => handleSelectCustomer(customer)}
+            onDeleteCustomer={handleDeleteCustomer}
           />
         )}
       </div>

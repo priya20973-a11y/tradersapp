@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Grid,
   List,
@@ -23,6 +24,7 @@ import { SalesOrderDetailModal } from "./sales-order/sales-order-detail-modal";
 import { fetchCachedSales, invalidateSalesCache } from "@/lib/sales-cache";
 
 export function SalesOrdersDirectory() {
+  const router = useRouter();
   const [data, setData] = useState<{
     customers: CustomerRecord[];
     orders: SalesOrderDocument[];
@@ -91,6 +93,10 @@ export function SalesOrdersDirectory() {
 
   // Status transitions & Invoicing
   const handleAction = async (documentId: string, action: "invoice-from-order") => {
+    if (action === "invoice-from-order") {
+      router.push(`/sales/invoices/new?salesOrderId=${documentId}`);
+      return;
+    }
     try {
       setActionNotice(null);
       const res = await fetch("/api/sales", {

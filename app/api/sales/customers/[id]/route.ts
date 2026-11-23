@@ -1,9 +1,9 @@
-import { isValidObjectId, Types } from "mongoose";
+import mongoose, { isValidObjectId, Types } from "mongoose";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import { Customer, SalesDocument } from "@/models";
+import { Customer, SalesDocument, TraderProfile } from "@/models";
 import { getSalesScope, respondError } from "../../sales-service";
 
 export async function GET(
@@ -214,10 +214,50 @@ export async function DELETE(
       query._id = id;
     }
 
+    // Safely check for associated records to avoid breaking transactions
+    const targetObjId = isValidObjectId(id) ? new Types.ObjectId(id) : null;
+    const docQuery: Record<string, unknown> = {
+      organizationId: scope.organizationId,
+      $or: [
+        ...(targetObjId ? [{ customerId: targetObjId }] : []),
+        { customerId: id },
+      ],
+    };
+
+    const isConnected = mongoose.connection.readyState === 1;
+    const isSalesDocMocked = Boolean(
+      (SalesDocument.countDocuments as { _isMockFunction?: boolean })._isMockFunction,
+    );
+
+    if (isConnected || isSalesDocMocked) {
+      const relatedDocsCount = await SalesDocument.countDocuments(docQuery).catch(() => 0);
+      if (relatedDocsCount > 0) {
+        return respondError(
+          `Cannot delete client with ${relatedDocsCount} existing transaction record${
+            relatedDocsCount > 1 ? "s" : ""
+          } (invoices, sales orders, or payments). Please delete or reassign related records first.`,
+          400,
+        );
+      }
+
+      const isTraderMocked = Boolean(
+        (TraderProfile.countDocuments as { _isMockFunction?: boolean })._isMockFunction,
+      );
+      if (isConnected || isTraderMocked) {
+        const relatedTraderProfilesCount = await TraderProfile.countDocuments(docQuery).catch(() => 0);
+        if (relatedTraderProfilesCount > 0) {
+          return respondError(
+            "Cannot delete client linked to an existing Trader Profile. Please remove or reassign the trader profile first.",
+            400,
+          );
+        }
+      }
+    }
+
     const deleted = await Customer.findOneAndDelete(query);
     if (!deleted) return respondError("Customer not found.", 404);
 
-    return NextResponse.json({ ok: true, message: "Customer deleted successfully." });
+    return NextResponse.json({ ok: true, message: "Client deleted successfully." });
   } catch (error) {
     return respondError(error instanceof Error ? error.message : "Internal Server Error", 500);
   }

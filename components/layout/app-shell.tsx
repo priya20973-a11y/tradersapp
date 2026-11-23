@@ -76,7 +76,6 @@ const salesNavigation = [
   { href: "/sales/recurring-invoices", label: "Recurring Invoices" },
   { href: "/sales/delivery-challans", label: "Delivery Challans" },
   { href: "/sales/credit-notes", label: "Credit Notes" },
-  { href: "/sales/stock", label: "Stock Lots" },
 ];
 
 export function AppShell({

@@ -246,6 +246,7 @@ export async function GET(request: Request) {
         termsAndConditions: inv.termsAndConditions || "",
         itemsCount: inv.items?.length || 0,
         emailsSentCount: inv.emailsSent?.length || 0,
+        relatedDocumentId: inv.relatedDocumentId ? String(inv.relatedDocumentId) : "",
         createdAt: inv.createdAt ? new Date(inv.createdAt).toISOString() : "",
       };
     });
@@ -572,7 +573,11 @@ export async function POST(request: Request) {
       type: "Invoice",
       number: invoiceNumber,
       customerId: new Types.ObjectId(String(customer._id)),
-      relatedDocumentId: linkedSO ? (linkedSO as { _id: Types.ObjectId })._id : undefined,
+      relatedDocumentId: linkedSO
+        ? (linkedSO as { _id: Types.ObjectId })._id
+        : (salesOrderIdParam && isValidObjectId(salesOrderIdParam)
+            ? new Types.ObjectId(salesOrderIdParam)
+            : undefined),
       status: initialStatus,
       issueDate,
       dueDate,
@@ -641,6 +646,19 @@ export async function POST(request: Request) {
         customerName: customer.name,
       },
     });
+
+    if (linkedSO) {
+      await SalesDocument.updateOne(
+        {
+          _id: (linkedSO as { _id: Types.ObjectId })._id,
+          organizationId: new Types.ObjectId(organizationId),
+          status: { $nin: ["Cancelled"] },
+        },
+        { $set: { status: "Invoiced" } }
+      ).catch((err) => {
+        console.error("Warning: Failed to update sales order status to Invoiced:", err);
+      });
+    }
 
     return NextResponse.json(
       {

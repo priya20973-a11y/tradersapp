@@ -153,6 +153,7 @@ export async function GET(
         dueDate: invoice.dueDate ? new Date(invoice.dueDate).toISOString() : "",
         paymentTerms: invoice.paymentTerms || "Due on Receipt",
         salesperson: invoice.salesperson || "",
+        relatedDocumentId: invoice.relatedDocumentId ? String(invoice.relatedDocumentId) : "",
         subject: invoice.subject || "",
         referenceNumber: invoice.referenceNumber || "",
         customerNotes: invoice.customerNotes || "",

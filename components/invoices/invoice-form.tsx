@@ -199,6 +199,29 @@ export function InvoiceForm({
   );
   const [subject, setSubject] = useState(initialData?.subject || "");
 
+  // Invoice-level adjustments
+  const [invoiceDiscount, setInvoiceDiscount] = useState<string>(
+    initialData ? String(initialData.discount || "") : "",
+  );
+  const [invoiceDiscountType, setInvoiceDiscountType] = useState<
+    "percent" | "amount"
+  >(initialData?.discountType || "percent");
+  const [shippingCharges, setShippingCharges] = useState<string>(
+    initialData ? String(initialData.shippingCharges || "") : "",
+  );
+  const [adjustment, setAdjustment] = useState<string>(
+    initialData ? String(initialData.adjustment || "") : "",
+  );
+
+  // Notes & terms
+  const [customerNotes, setCustomerNotes] = useState(
+    initialData?.customerNotes || "Thank you for your business. Please reach out with any questions.",
+  );
+  const [termsAndConditions, setTermsAndConditions] = useState(
+    initialData?.termsAndConditions ||
+      "1. Payment is due as per terms specified above.\n2. Please mention the invoice number in your remittance.\n3. Goods once sold will not be returned without authorization.",
+  );
+
   // Stock Location & Inventory State
   const [locations, setLocations] = useState<Array<{ id: string; name: string; type: "Warehouse" | "Shop"; code?: string }>>([]);
   const [stockLocationType, setStockLocationType] = useState<"Warehouse" | "Shop">(
@@ -253,34 +276,78 @@ export function InvoiceForm({
     fetch(`/api/sales?id=${soId}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (!data || !data.document) return;
-        const doc = data.document;
+        if (!data) return;
+        const doc =
+          data.document ||
+          (Array.isArray(data.documents)
+            ? data.documents.find((d: { id: string }) => d.id === soId)
+            : null);
+        if (!doc) return;
         setRelatedDocumentId(doc.id || doc._id || soId);
         setIsLocationLocked(true);
         if (doc.stockLocationType) setStockLocationType(doc.stockLocationType);
         if (doc.stockLocationId) setStockLocationId(doc.stockLocationId);
         if (doc.stockLocationName) setStockLocationName(doc.stockLocationName);
         if (doc.customerId) setSelectedCustomerId(doc.customerId);
+        if (doc.referenceNumber) setReferenceNumber(doc.referenceNumber);
+        if (doc.paymentTerms) {
+          setPaymentTerms(doc.paymentTerms);
+          try {
+            setDueDate(calculateDueDateFromPaymentTerms(invoiceDate, doc.paymentTerms, []));
+          } catch {
+            setDueDate(invoiceDate);
+          }
+        }
+        if (doc.salesperson) setSalesperson(doc.salesperson);
+        if (doc.subject) setSubject(doc.subject);
+        if (doc.customerNotes) setCustomerNotes(doc.customerNotes);
+        if (doc.termsAndConditions) setTermsAndConditions(doc.termsAndConditions);
+        if (doc.discount !== undefined && doc.discount !== null && Number(doc.discount) > 0) {
+          setInvoiceDiscount(String(doc.discount));
+        }
+        if (doc.discountType) {
+          setInvoiceDiscountType(doc.discountType === "amount" ? "amount" : "percent");
+        }
+        if (doc.adjustment !== undefined && doc.adjustment !== null && Number(doc.adjustment) !== 0) {
+          setAdjustment(String(doc.adjustment));
+        }
         if (Array.isArray(doc.items) && doc.items.length > 0) {
           setRows(
-            doc.items.map((it: { itemId?: string; name?: string; description?: string; hsnCode?: string; unit?: string; quantity?: number; rate?: number; discount?: number; discountType?: "percent" | "amount"; taxRate?: number }, idx: number) => ({
-              rowId: `row-${idx + 1}`,
-              itemId: it.itemId,
-              name: it.name || "",
-              description: it.description || "",
-              hsnCode: it.hsnCode || "",
-              unit: it.unit || "pcs",
-              quantity: Number(it.quantity) || 1,
-              rate: Number(it.rate) || 0,
-              discount: Number(it.discount) || 0,
-              discountType: it.discountType || "percent",
-              taxRate: Number(it.taxRate) || 18,
-            }))
+            doc.items.map(
+              (
+                it: {
+                  itemId?: string;
+                  name?: string;
+                  description?: string;
+                  hsnCode?: string;
+                  unit?: string;
+                  quantity?: number;
+                  rate?: number;
+                  price?: number;
+                  discount?: number;
+                  discountType?: "percent" | "amount";
+                  taxRate?: number;
+                },
+                idx: number,
+              ) => ({
+                rowId: `row-${idx + 1}`,
+                itemId: it.itemId,
+                name: it.name || "",
+                description: it.description || "",
+                hsnCode: it.hsnCode || "",
+                unit: it.unit || "pcs",
+                quantity: Number(it.quantity) || 1,
+                rate: Number(it.rate ?? it.price ?? 0),
+                discount: Number(it.discount) || 0,
+                discountType: it.discountType || "percent",
+                taxRate: Number(it.taxRate ?? doc.taxRate ?? 18),
+              }),
+            ),
           );
         }
       })
       .catch(() => {});
-  }, []);
+  }, [invoiceDate]);
 
   useEffect(() => {
     if (!stockLocationId) {
@@ -308,29 +375,6 @@ export function InvoiceForm({
       isMounted = false;
     };
   }, [stockLocationType, stockLocationId]);
-
-  // Invoice-level adjustments
-  const [invoiceDiscount, setInvoiceDiscount] = useState<string>(
-    initialData ? String(initialData.discount || "") : "",
-  );
-  const [invoiceDiscountType, setInvoiceDiscountType] = useState<
-    "percent" | "amount"
-  >(initialData?.discountType || "percent");
-  const [shippingCharges, setShippingCharges] = useState<string>(
-    initialData ? String(initialData.shippingCharges || "") : "",
-  );
-  const [adjustment, setAdjustment] = useState<string>(
-    initialData ? String(initialData.adjustment || "") : "",
-  );
-
-  // Notes & terms
-  const [customerNotes, setCustomerNotes] = useState(
-    initialData?.customerNotes || "Thank you for your business. Please reach out with any questions.",
-  );
-  const [termsAndConditions, setTermsAndConditions] = useState(
-    initialData?.termsAndConditions ||
-      "1. Payment is due as per terms specified above.\n2. Please mention the invoice number in your remittance.\n3. Goods once sold will not be returned without authorization.",
-  );
 
   // Submission State
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -522,6 +566,19 @@ export function InvoiceForm({
     }
   }, [customers, isEditing, handleCustomerChange]);
 
+  useEffect(() => {
+    if (selectedCustomerId && customers.length > 0 && !placeOfSupply) {
+      const matched = customers.find((c) => c.id === selectedCustomerId);
+      if (matched?.state) {
+        const matchedState = matched.state;
+        const timer = window.setTimeout(() => {
+          setPlaceOfSupply(matchedState);
+        }, 0);
+        return () => window.clearTimeout(timer);
+      }
+    }
+  }, [customers, selectedCustomerId, placeOfSupply]);
+
   // Row Manipulation
   const handleAddRow = () => {
     const newId = `row-${Date.now()}`;
@@ -669,6 +726,7 @@ export function InvoiceForm({
         stockLocationId: stockLocationId || undefined,
         stockLocationName: stockLocationName || locations.find((l) => l.id === stockLocationId)?.name || undefined,
         relatedDocumentId: relatedDocumentId || initialData?.relatedDocumentId || undefined,
+        salesOrderId: relatedDocumentId || initialData?.relatedDocumentId || undefined,
         issueDate: invoiceDate,
         dueDate,
         paymentTerms,
